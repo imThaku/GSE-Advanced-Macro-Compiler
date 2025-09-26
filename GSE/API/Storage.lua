@@ -113,8 +113,26 @@ function GSE.LoadVariables()
             pcall(
             function()
                 local localsuccess, uncompressedVersion = GSE.DecodeMessage(v)
-                GSE.V[k] = loadstring("return " .. uncompressedVersion.funct)()
-                if type(GSE.V[k]()) == "boolean" then
+
+                -- Handle LiveLua variables
+                if uncompressedVersion.type == "LiveLua" then
+                    -- Create a function that returns the LiveLua variable value
+                    GSE.V[k] = function()
+                        return GSE.GetLiveVariableValue(k)
+                    end
+
+                    -- Start the timer for this variable
+                    if uncompressedVersion.code and uncompressedVersion.updateInterval then
+                        GSE.CreateLiveVariableTimer(k, uncompressedVersion.code, uncompressedVersion.updateInterval)
+                    else
+                        GSE.Print("Error: LiveLua variable '" .. k .. "' missing code or updateInterval")
+                    end
+                else
+                    -- Classic variables
+                    GSE.V[k] = loadstring("return " .. uncompressedVersion.funct)()
+                end
+
+                if GSE.V[k] and type(GSE.V[k]()) == "boolean" then
                     GSE.BooleanVariables["GSE.V['" .. k .. "']()"] = "GSE.V['" .. k .. "']()"
                 end
             end
@@ -1221,13 +1239,34 @@ end
 function GSE.UpdateVariable(variable, name, status)
     local compressedvariable = GSE.EncodeMessage(variable)
     GSEVariables[name] = compressedvariable
-    local actualfunct, error = loadstring("return " .. variable.funct)
-    if error then
-        print(error)
+
+    -- Handle LiveLua variables
+    if variable.type == "LiveLua" then
+        -- Stop old timer if it exists
+        GSE.StopLiveVariableTimer(name)
+
+        -- Create a function that returns the LiveLua variable value
+        GSE.V[name] = function()
+            return GSE.GetLiveVariableValue(name)
+        end
+
+        -- Start the new timer
+        if variable.code and variable.updateInterval then
+            GSE.CreateLiveVariableTimer(name, variable.code, variable.updateInterval)
+        else
+            GSE.Print("Error: LiveLua variable '" .. name .. "' missing code or updateInterval")
+        end
+    else
+        -- Classic variables
+        local actualfunct, error = loadstring("return " .. variable.funct)
+        if error then
+            print(error)
+        end
+        if type(actualfunct) == "function" then
+            GSE.V[name] = actualfunct()
+        end
     end
-    if type(actualfunct) == "function" then
-        GSE.V[name] = actualfunct()
-    end
+
     if GSE.V[name] and type(GSE.V[name]()) == "boolean" then
         GSE.BooleanVariables["GSE.V['" .. name .. "']()"] = "GSE.V['" .. name .. "']()"
     end

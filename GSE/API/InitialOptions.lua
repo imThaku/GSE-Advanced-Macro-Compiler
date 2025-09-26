@@ -95,6 +95,17 @@ function GSE.SetDefaultOptions()
     GSE.resetMacroResetModifiers()
     GSEOptions.frameLocations = {}
     GSEOptions.Multiclick = true
+
+    -- Options for LiveLua variables
+    if not GSEOptions.LiveVariables then
+        GSEOptions.LiveVariables = {
+            updateInterval = 100, -- ms default
+            maxUpdateInterval = 10000, -- 10 seconds maximum
+            minUpdateInterval = 50, -- 50ms minimum
+            maxLiveVariables = 50, -- Limit for number of real-time variables
+            cacheTimeout = 30000, -- 30 seconds before cache cleanup
+        }
+    end
 end
 
 GSE.SetDefaultOptions()

@@ -713,6 +713,20 @@ L["When exporting from GSE create a descriptive export for Discord/Discource for
 L["Create Human Readable Exports"] = true
 L["Manage Macros"] = true
 L["The author of this Variable."] = true
+
+-- LiveLua Variables
+L["Variable Type"] = true
+L["Classic Variable"] = true
+L["LiveLua Variable"] = true
+L["Update Interval (ms)"] = true
+L["LiveLua Code"] = true
+L["LiveLua variable error "] = true
+L["LiveLua code cannot be empty"] = true
+L["Interval must be a number"] = true
+L["Minimum interval is %dms"] = true
+L["Maximum interval is %dms"] = true
+L["LiveLua variable limit reached: "] = true
+L["Lua syntax error: "] = true
 L["Last Updated"] = true
 L["The author of this Macro."] = true
 L["Saved"] = true

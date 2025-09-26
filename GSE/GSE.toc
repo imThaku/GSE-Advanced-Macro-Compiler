@@ -1,4 +1,4 @@
-## Interface: 11507, 110200, 50500, 110205 
+## Interface: 11507, 110200, 50500, 110205
 
 ## Title: |cFFFFFFFFGS|r|cFF00FFFFE|r
 ## Notes: Create Sequence buttons and Macros using powerful API functions.
@@ -52,6 +52,7 @@ API\StringFunctions.lua
 API\CharacterFunctions.lua
 API\Translator.lua
 API\Storage.lua
+API\LiveVariables.lua
 API\Plugins.lua
 API\Serialisation.lua
 API\OneOffEvents.lua
