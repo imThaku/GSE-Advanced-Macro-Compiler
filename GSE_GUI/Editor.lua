@@ -3759,6 +3759,146 @@ end]],
         return returntree
     end
 
+    local function showLiveVariable(name, container)
+        editframe.SequenceName = name
+        local implementation = AceGUI:Create("EditBox")
+        local liveVariable = {
+            code = "UnitHealth('player')",
+            updateInterval = 100,
+            comments = "",
+            Author = GSE.GetCharacterName()
+        }
+
+        local keyEditBox = AceGUI:Create("EditBox")
+        keyEditBox:SetLabel(L["Name"])
+        keyEditBox:DisableButton(true)
+        keyEditBox:SetWidth(150)
+        keyEditBox:SetText(name)
+
+        local authoreditbox = AceGUI:Create("EditBox")
+        authoreditbox:SetLabel(L["Author"])
+        authoreditbox:SetWidth(250)
+        authoreditbox:DisableButton(true)
+        authoreditbox:SetText(liveVariable.Author)
+
+        container:AddChild(keyEditBox)
+        container:AddChild(authoreditbox)
+
+        local commentsEditBox = AceGUI:Create("MultiLineEditBox")
+        commentsEditBox:SetLabel(L["Help Information"])
+        commentsEditBox:SetNumLines(7)
+        commentsEditBox:SetFullWidth(true)
+        commentsEditBox:DisableButton(true)
+        commentsEditBox:SetText(liveVariable.comments)
+        commentsEditBox:SetCallback(
+            "OnTextChanged",
+            function(self, event, text)
+                liveVariable.comments = text
+            end
+        )
+
+        container:AddChild(commentsEditBox)
+
+        local updateIntervalBox = AceGUI:Create("EditBox")
+        updateIntervalBox:SetLabel(L["Update Interval (ms)"])
+        updateIntervalBox:SetWidth(150)
+        updateIntervalBox:DisableButton(true)
+        updateIntervalBox:SetText(tostring(liveVariable.updateInterval))
+        updateIntervalBox:SetCallback(
+            "OnTextChanged",
+            function(self, event, text)
+                local interval = tonumber(text)
+                if interval and interval >= 50 and interval <= 10000 then
+                    liveVariable.updateInterval = interval
+                end
+            end
+        )
+
+        container:AddChild(updateIntervalBox)
+
+        local codeEditBox = AceGUI:Create("MultiLineEditBox")
+        codeEditBox:SetLabel(L["Live Variable Code"])
+        codeEditBox:SetNumLines(10)
+        codeEditBox:SetFullWidth(true)
+        codeEditBox:DisableButton(true)
+        codeEditBox:SetText(liveVariable.code)
+        codeEditBox:SetCallback(
+            "OnTextChanged",
+            function(self, event, text)
+                liveVariable.code = text
+            end
+        )
+
+        container:AddChild(codeEditBox)
+
+        implementation:SetLabel(L["Implementation Link"])
+        implementation:DisableButton(true)
+        local implementationText = [[=GSE.V["]] .. name .. [["]()]]
+        implementation:SetText(implementationText)
+        container:AddChild(implementation)
+
+        local currentOutput = AceGUI:Create("EditBox")
+        currentOutput:SetLabel(L["Current Value"])
+        currentOutput:DisableButton(true)
+        local outputText = L["Not Yet Active"]
+        if GSE.GetLiveVariableValue(name) then
+            outputText = tostring(GSE.GetLiveVariableValue(name))
+        end
+        currentOutput:SetText(outputText)
+        container:AddChild(currentOutput)
+
+        local buttonRow = AceGUI:Create("SimpleGroup")
+        buttonRow:SetLayout("Flow")
+        buttonRow:SetWidth(400)
+
+        local savebutton = AceGUI:Create("Button")
+        savebutton:SetText(L["Save"])
+        savebutton:SetWidth(150)
+        savebutton:SetCallback(
+            "OnClick",
+            function()
+                local varName = keyEditBox:GetText()
+                local code = codeEditBox:GetText()
+                local interval = tonumber(updateIntervalBox:GetText()) or 100
+
+                if varName and varName ~= "" and code and code ~= "" then
+                    local success = GSE.CreateLiveVariableTimer(varName, code, interval)
+                    if success then
+                        GSE.Print("Live Variable '" .. varName .. "' created successfully!", "LiveVariables")
+                        editframe.ManageTree()
+                    else
+                        GSE.Print("Failed to create Live Variable '" .. varName .. "'", "LiveVariables")
+                    end
+                else
+                    GSE.Print("Please fill in both name and code fields", "LiveVariables")
+                end
+            end
+        )
+        buttonRow:AddChild(savebutton)
+
+        local deletebutton = AceGUI:Create("Button")
+        deletebutton:SetText(L["Delete"])
+        deletebutton:SetWidth(150)
+        deletebutton:SetCallback(
+            "OnClick",
+            function()
+                local varName = keyEditBox:GetText()
+                if varName and varName ~= "" then
+                    GSE.StopLiveVariableTimer(varName)
+                    GSE.Print("Live Variable '" .. varName .. "' deleted", "LiveVariables")
+                    if editframe.loaded then
+                        container:ReleaseChildren()
+                        editframe.loaded = nil
+                    end
+                    editframe.ManageTree()
+                end
+            end
+        )
+        buttonRow:AddChild(deletebutton)
+
+        container:AddChild(buttonRow)
+    end
+
     local function buildVariablesMenu()
         local tree = {
             value = "VARIABLES",
@@ -3768,6 +3908,11 @@ end]],
                 {
                     value = "NEWVARIABLES",
                     text = L["New Variable"],
+                    icon = Statics.ActionsIcons.Add
+                },
+                {
+                    value = "NEWLIVEVARIABLES",
+                    text = L["New Live Variable"],
                     icon = Statics.ActionsIcons.Add
                 }
             }
@@ -4838,7 +4983,13 @@ end]],
                                 container:ReleaseChildren()
                                 editframe.loaded = nil
                             end
-                            showVariable(key, container)
+                            if key == "NEWVARIABLES" then
+                                showVariable("NewVariable", container)
+                            elseif key == "NEWLIVEVARIABLES" then
+                                showLiveVariable("NewLiveVariable", container)
+                            else
+                                showVariable(key, container)
+                            end
                             editframe.loaded = true
                         end
                     elseif area == "Macro" then
