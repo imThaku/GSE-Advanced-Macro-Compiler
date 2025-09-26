@@ -810,6 +810,9 @@ L["You cannot open a new Sequence Editor window while you are in combat.  Please
 L["New Sequence"] = true
 L["Default"] = true
 L["New Variable"] = true
+L["New Live Variable"] = true
+L["Live Variable Code"] = true
+L["Update Interval (ms)"] = true
 
 L["WhatsNew"] =
     "|cFFFFFFFFGS|r|cFF00FFFFE|r 3.2.28 changes the import and export strings.  Each GSE import will now start with !GSEx! where the x shows the version number going forward.  https://wago.io/gse has been updated toi handle these new import strings and wago.io exports will switch to exporting these style strings around 11.2.  These new strings will be picked up by the classic variants when they are next updated by Blizzard.  As always details are in Discord."

@@ -19,6 +19,9 @@ local LiveVariableDefaults = {
 }
 
 -- Default configuration for options
+if not GSEOptions then
+    GSEOptions = {}
+end
 if not GSEOptions.LiveVariables then
     GSEOptions.LiveVariables = LiveVariableDefaults
 end
@@ -42,6 +45,12 @@ end
 local function ValidateUpdateInterval(interval)
     if type(interval) ~= "number" then
         return false, L["Interval must be a number"]
+    end
+
+    -- Ensure GSEOptions.LiveVariables is initialized
+    if not GSEOptions or not GSEOptions.LiveVariables then
+        GSEOptions = GSEOptions or {}
+        GSEOptions.LiveVariables = LiveVariableDefaults
     end
 
     if interval < GSEOptions.LiveVariables.minUpdateInterval then
@@ -85,6 +94,12 @@ end
 
 -- Function to create a timer for a LiveLua variable
 function GSE.CreateLiveVariableTimer(varName, code, updateInterval)
+    -- Ensure GSEOptions.LiveVariables is initialized
+    if not GSEOptions or not GSEOptions.LiveVariables then
+        GSEOptions = GSEOptions or {}
+        GSEOptions.LiveVariables = LiveVariableDefaults
+    end
+
     -- Validate parameters
     local isValidCode, codeError = ValidateLuaCode(code)
     if not isValidCode then
@@ -181,6 +196,12 @@ end
 
 -- Automatic cleanup of expired variable cache
 local function CleanupExpiredCache()
+    -- Ensure GSEOptions.LiveVariables is initialized
+    if not GSEOptions or not GSEOptions.LiveVariables then
+        GSEOptions = GSEOptions or {}
+        GSEOptions.LiveVariables = LiveVariableDefaults
+    end
+
     local currentTime = GetTime()
     local timeout = GSEOptions.LiveVariables.cacheTimeout / 1000
 
@@ -192,8 +213,21 @@ local function CleanupExpiredCache()
     end
 end
 
--- Cache cleanup timer (every 5 minutes)
-local cacheCleanupTimer = C_Timer.NewTicker(300, CleanupExpiredCache)
+-- Cache cleanup timer (every 5 minutes) - delayed initialization
+local cacheCleanupTimer
+local function InitializeCacheCleanupTimer()
+    if not cacheCleanupTimer then
+        -- Ensure GSEOptions.LiveVariables is initialized before creating the timer
+        if not GSEOptions or not GSEOptions.LiveVariables then
+            GSEOptions = GSEOptions or {}
+            GSEOptions.LiveVariables = LiveVariableDefaults
+        end
+        cacheCleanupTimer = C_Timer.NewTicker(300, CleanupExpiredCache)
+    end
+end
+
+-- Initialize timer after a small delay to ensure all options are loaded
+C_Timer.After(1, InitializeCacheCleanupTimer)
 
 -- Event handler for cleanup on logout
 local liveVariableEventFrame = CreateFrame("Frame")
