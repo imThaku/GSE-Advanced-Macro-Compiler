@@ -24,6 +24,158 @@ local function manageMissingVariable(varname)
     end
 end
 
+-- Cache for dynamic variable evaluations to improve performance
+local dynamicVariableCache = {}
+local lastCacheUpdate = 0
+local CACHE_REFRESH_INTERVAL = 0.1 -- 100ms minimum between cache updates
+
+--- Evaluate a variable dynamically at execution time
+--- @param varExpression string The variable expression to evaluate (without leading "=")
+--- @param useCache boolean Whether to use caching for performance (default: true)
+--- @return any The result of the variable evaluation, or nil if error
+function GSE.EvaluateVariableDynamically(varExpression, useCache)
+    if GSE.isEmpty(varExpression) then
+        return nil
+    end
+
+    if useCache == nil then
+        useCache = true
+    end
+
+    local currentTime = GetTime()
+    local cacheKey = varExpression
+
+    -- Check cache if enabled and not expired
+    if useCache and dynamicVariableCache[cacheKey] then
+        local cacheEntry = dynamicVariableCache[cacheKey]
+        if currentTime - cacheEntry.timestamp < CACHE_REFRESH_INTERVAL then
+            return cacheEntry.value
+        end
+    end
+
+    local success, result = xpcall(
+        function()
+            local evaluatedFunction = loadstring("return " .. varExpression)
+            if evaluatedFunction then
+                return evaluatedFunction()
+            end
+            return nil
+        end,
+        function(err)
+            GSE.PrintDebugMessage("Dynamic variable evaluation error for '" .. varExpression .. "': " .. tostring(err), Statics.DebugModules["API"])
+            manageMissingVariable(varExpression)
+            return nil
+        end
+    )
+
+    if success and result ~= nil then
+        -- Cache the result if caching is enabled
+        if useCache then
+            dynamicVariableCache[cacheKey] = {
+                value = result,
+                timestamp = currentTime
+            }
+        end
+        return result
+    end
+
+    return nil
+end
+
+--- Clear the dynamic variable cache (useful for testing or manual refresh)
+function GSE.ClearDynamicVariableCache()
+    dynamicVariableCache = {}
+    lastCacheUpdate = 0
+end
+
+--- Check if a value should be evaluated dynamically
+--- @param value string The value to check
+--- @return boolean True if the value should be evaluated dynamically
+function GSE.ShouldEvaluateDynamically(value)
+    if type(value) ~= "string" then
+        return false
+    end
+
+    -- Check if it starts with "=" (dynamic variable marker)
+    return string.sub(value, 1, 1) == "="
+end
+
+--- Create a secure function for dynamic evaluation that can be used in OnClick scripts
+--- This function will be embedded as a string in the secure execution environment
+local function createDynamicEvaluationScript()
+    return [=[
+local function evaluateDynamicVariable(expression, fallbackValue)
+    if not expression or expression == "" then
+        return fallbackValue
+    end
+
+    local success, result = pcall(function()
+        local func = loadstring("return " .. expression)
+        if func then
+            return func()
+        end
+        return fallbackValue
+    end)
+
+    if success and result ~= nil then
+        return tostring(result)
+    else
+        return fallbackValue
+    end
+end
+]=]
+end
+
+--- Helper function to enable/disable dynamic variables for specific sequences
+--- @param sequenceName string The name of the sequence
+--- @param enable boolean True to enable dynamic evaluation for this sequence
+function GSE.SetSequenceDynamicVariables(sequenceName, enable)
+    if not sequenceName then
+        return
+    end
+
+    -- This could be extended to support per-sequence settings
+    -- For now, it's a global setting, but this provides the API for future enhancement
+    GSEOptions.useDynamicVariables = enable
+
+    GSE.Print(
+        string.format("Dynamic variables %s for sequence '%s'. Sequence needs to be recompiled to take effect.",
+            enable and "enabled" or "disabled",
+            sequenceName
+        ),
+        "GSE Dynamic Variables"
+    )
+
+    -- Force a reload of the sequence to apply the new setting
+    GSE.ReloadSequences()
+end
+
+--- Helper function to test if dynamic variables are working correctly
+--- This function can be called from the game console for testing
+function GSE.TestDynamicVariables()
+    GSE.Print("Testing dynamic variable evaluation...", "GSE Dynamic Variables")
+
+    -- Test basic evaluation
+    local testExpr = "math.random(1, 100)"
+    local result1 = GSE.EvaluateVariableDynamically(testExpr, false)
+    local result2 = GSE.EvaluateVariableDynamically(testExpr, false)
+
+    GSE.Print("Random test 1: " .. tostring(result1), "GSE Dynamic Variables")
+    GSE.Print("Random test 2: " .. tostring(result2), "GSE Dynamic Variables")
+
+    -- Test WoW API calls
+    local playerTestExpr = "UnitHealthMax('player')"
+    local healthResult = GSE.EvaluateVariableDynamically(playerTestExpr, false)
+    GSE.Print("Player max health: " .. tostring(healthResult), "GSE Dynamic Variables")
+
+    -- Test error handling
+    local errorExpr = "invalidFunctionCall()"
+    local errorResult = GSE.EvaluateVariableDynamically(errorExpr, false)
+    GSE.Print("Error test result: " .. tostring(errorResult), "GSE Dynamic Variables")
+
+    GSE.Print("Dynamic variables test completed. Check results above.", "GSE Dynamic Variables")
+end
+
 function GSE.CloneSequence(orig)
     local orig_type = type(orig)
     local copy
@@ -750,19 +902,45 @@ local function buildAction(action, metaData, variables)
                 -- we dont want to do anything here
             else
                 if string.sub(value, 1, 1) == "=" then
-                    xpcall(
-                        function()
-                            local tempval = loadstring("return " .. string.sub(value, 2, string.len(value)))()
-                            if tempval then
-                                value = tostring(tempval)
-                            else
-                                GSE.Print(L["There was an error processing "] .. value, Statics.DebugModules["API"])
+                    -- Check if dynamic variable evaluation is enabled (global setting or per-action)
+                    local useDynamicEvaluation = GSEOptions and GSEOptions.useDynamicVariables
+
+                    if useDynamicEvaluation then
+                        -- Mark this value for dynamic evaluation - keep the original expression
+                        -- Add a special marker to indicate this needs dynamic evaluation
+                        spelllist["__dynamic_" .. k] = string.sub(value, 2, string.len(value))
+                        -- For backward compatibility, also evaluate statically as fallback
+                        xpcall(
+                            function()
+                                local tempval = loadstring("return " .. string.sub(value, 2, string.len(value)))()
+                                if tempval then
+                                    value = tostring(tempval)
+                                else
+                                    GSE.Print(L["There was an error processing "] .. value, Statics.DebugModules["API"])
+                                end
+                            end,
+                            function(err)
+                                manageMissingVariable(string.sub(value, 2, string.len(value)))
+                                -- Use empty string as fallback if evaluation fails
+                                value = ""
                             end
-                        end,
-                        function(err)
-                            manageMissingVariable(string.sub(value, 2, string.len(value)))
-                        end
-                    )
+                        )
+                    else
+                        -- Traditional static evaluation
+                        xpcall(
+                            function()
+                                local tempval = loadstring("return " .. string.sub(value, 2, string.len(value)))()
+                                if tempval then
+                                    value = tostring(tempval)
+                                else
+                                    GSE.Print(L["There was an error processing "] .. value, Statics.DebugModules["API"])
+                                end
+                            end,
+                            function(err)
+                                manageMissingVariable(string.sub(value, 2, string.len(value)))
+                            end
+                        )
+                    end
                 end
 
                 if k == "spell" then
@@ -1101,8 +1279,14 @@ end
         _G[name]:SetAttribute("iteration", 1)
     end
 
+    local dynamicEvalScript = ""
+    if GSEOptions and GSEOptions.useDynamicVariables then
+        dynamicEvalScript = createDynamicEvaluationScript()
+    end
+
     local clickexecution =
         GSE.GetMacroResetImplementation() ..
+        dynamicEvalScript ..
         [=[
     local mods = "RALT=" .. tostring(IsRightAltKeyDown()) .. "|" ..
     "LALT=".. tostring(IsLeftAltKeyDown()) .. "|" ..
@@ -1120,6 +1304,8 @@ end
     local iteration = self:GetAttribute('iteration') or 1
     step = tonumber(step)
     iteration = tonumber(iteration)
+
+    -- Enhanced attribute setting with dynamic variable evaluation
     for k,v in pairs(spelllist[iteration][step]) do
         if k == "macrotext" then
             self:SetAttribute("macro", nil )
@@ -1129,8 +1315,23 @@ end
             self:SetAttribute("unit", nil )
         elseif k == "Icon" then
             -- skip
+        elseif string.sub(k, 1, 10) == "__dynamic_" then
+            -- This is a dynamic variable expression marker, skip setting it as attribute
+        else
+            local finalValue = v
+            local dynamicKey = "__dynamic_" .. k
+
+            -- Check if there's a dynamic version of this attribute
+            if spelllist[iteration][step][dynamicKey] and evaluateDynamicVariable then
+                -- Evaluate the dynamic expression
+                local dynamicResult = evaluateDynamicVariable(spelllist[iteration][step][dynamicKey], v)
+                if dynamicResult and dynamicResult ~= "" then
+                    finalValue = dynamicResult
+                end
+            end
+
+            self:SetAttribute(k, finalValue)
         end
-        self:SetAttribute(k, v )
     end
 
     if step < #spelllist[iteration] then
@@ -1146,6 +1347,7 @@ end
     if GSEOptions.Multiclick then
         clickexecution =
             GSE.GetMacroResetImplementation() ..
+            dynamicEvalScript ..
             [=[
     local mods = "RALT=" .. tostring(IsRightAltKeyDown()) .. "|" ..
     "LALT=".. tostring(IsLeftAltKeyDown()) .. "|" ..
@@ -1166,6 +1368,7 @@ end
     if self:GetAttribute('stepped') then
         self:SetAttribute('stepped', false)
     else
+        -- Enhanced attribute setting with dynamic variable evaluation (Multiclick version)
         for k,v in pairs(spelllist[iteration][step]) do
             if k == "macrotext" then
                 self:SetAttribute("macro", nil )
@@ -1175,8 +1378,23 @@ end
                 self:SetAttribute("unit", nil )
             elseif k == "Icon" then
                 -- skip
+            elseif string.sub(k, 1, 10) == "__dynamic_" then
+                -- This is a dynamic variable expression marker, skip setting it as attribute
+            else
+                local finalValue = v
+                local dynamicKey = "__dynamic_" .. k
+
+                -- Check if there's a dynamic version of this attribute
+                if spelllist[iteration][step][dynamicKey] and evaluateDynamicVariable then
+                    -- Evaluate the dynamic expression
+                    local dynamicResult = evaluateDynamicVariable(spelllist[iteration][step][dynamicKey], v)
+                    if dynamicResult and dynamicResult ~= "" then
+                        finalValue = dynamicResult
+                    end
+                end
+
+                self:SetAttribute(k, finalValue)
             end
-            self:SetAttribute(k, v )
         end
 
         self:SetAttribute('stepped', true)

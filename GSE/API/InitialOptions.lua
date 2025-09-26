@@ -92,6 +92,8 @@ function GSE.SetDefaultOptions()
     -- GSEOptions.editorWidth = 700
     GSEOptions.showCurrentSpells = true
     GSEOptions.OOCQueueDelay = 7
+    -- Dynamic variables: evaluate variables at execution time instead of compile time
+    GSEOptions.useDynamicVariables = true  -- Default to false for compatibility
     GSE.resetMacroResetModifiers()
     GSEOptions.frameLocations = {}
     GSEOptions.Multiclick = true
