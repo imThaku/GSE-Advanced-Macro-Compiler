@@ -81,19 +81,23 @@ local function ExecuteLiveVariableCode(code, varName)
     local success, result = pcall(function()
         local func
 
-        -- Try to load as complete function first (new format)
-        func = loadstring(code)
-        if func then
-            -- Execute the function and get its result
-            local compiledFunc = func()
-            if type(compiledFunc) == "function" then
-                return compiledFunc()
-            else
-                -- If it's not a function, return the value directly
-                return compiledFunc
+        -- Check if code starts with "function()" - new format
+        local trimmedCode = code:trim()
+        if trimmedCode:match("^function%s*%(") then
+            -- New format: complete function definition
+            func = loadstring(code)
+            if func then
+                -- Execute the code to get the function, then call it
+                local userFunc = func()
+                if type(userFunc) == "function" then
+                    return userFunc()
+                else
+                    -- If it's not a function, return the value directly
+                    return userFunc
+                end
             end
         else
-            -- Fallback to old format (expression with "return" prefix)
+            -- Old format: expression with "return" prefix
             func = loadstring("return " .. code)
             if func then
                 return func()
