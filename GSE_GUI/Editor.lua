@@ -3766,8 +3766,22 @@ end]],
             code = "UnitHealth('player')",
             updateInterval = 100,
             comments = "",
-            Author = GSE.GetCharacterName()
+            Author = GSE.GetCharacterName(),
+            debugMode = false
         }
+
+        -- If this is an existing Live Variable, get its current settings
+        local isExisting = GSE.LiveVariableTimers and GSE.LiveVariableTimers[name]
+        if isExisting then
+            -- Try to get stored settings or use defaults
+            liveVariable = {
+                code = "-- Live Variable Code (current settings not stored)",
+                updateInterval = 100,  -- Default, actual interval not easily retrievable
+                comments = "Existing Live Variable: " .. name,
+                Author = GSE.GetCharacterName(),
+                debugMode = GSE.LiveVariableDebug and GSE.LiveVariableDebug[name] or false
+            }
+        end
 
         local keyEditBox = AceGUI:Create("EditBox")
         keyEditBox:SetLabel(L["Name"])
@@ -3816,6 +3830,36 @@ end]],
 
         container:AddChild(updateIntervalBox)
 
+        local debugCheckBox = AceGUI:Create("CheckBox")
+        debugCheckBox:SetLabel(L["Debug Mode (Chat Output)"])
+        debugCheckBox:SetWidth(300)
+        debugCheckBox:SetValue(liveVariable.debugMode)
+        debugCheckBox:SetTriState(false)
+        debugCheckBox:SetCallback(
+            "OnValueChanged",
+            function(self, event, value)
+                liveVariable.debugMode = value
+            end
+        )
+        debugCheckBox:SetCallback(
+            "OnEnter",
+            function()
+                GSE.CreateToolTip(
+                    L["Debug Mode"],
+                    L["When enabled, the variable value will be printed to chat each time it updates. Useful for testing."],
+                    editframe
+                )
+            end
+        )
+        debugCheckBox:SetCallback(
+            "OnLeave",
+            function()
+                GSE.ClearTooltip(editframe)
+            end
+        )
+
+        container:AddChild(debugCheckBox)
+
         local codeEditBox = AceGUI:Create("MultiLineEditBox")
         codeEditBox:SetLabel(L["Live Variable Code"])
         codeEditBox:SetNumLines(10)
@@ -3862,9 +3906,10 @@ end]],
                 local interval = tonumber(updateIntervalBox:GetText()) or 100
 
                 if varName and varName ~= "" and code and code ~= "" then
-                    local success = GSE.CreateLiveVariableTimer(varName, code, interval)
+                    local debugMode = debugCheckBox:GetValue()
+                    local success = GSE.CreateLiveVariableTimer(varName, code, interval, debugMode)
                     if success then
-                        GSE.Print("Live Variable '" .. varName .. "' created successfully!", "LiveVariables")
+                        GSE.Print("Live Variable '" .. varName .. "' created successfully!" .. (debugMode and " (Debug Mode ON)" or ""), "LiveVariables")
                         editframe.ManageTree()
                     else
                         GSE.Print("Failed to create Live Variable '" .. varName .. "'", "LiveVariables")
@@ -3917,12 +3962,25 @@ end]],
                 }
             }
         }
+        -- Add regular variables
         for k, _ in pairs(GSEVariables) do
             local node = {
                 value = k,
                 text = "|CFFFFFFFF" .. k .. Statics.StringReset
             }
             table.insert(tree.children, node)
+        end
+
+        -- Add Live Variables
+        if GSE.LiveVariableTimers then
+            for k, _ in pairs(GSE.LiveVariableTimers) do
+                local node = {
+                    value = k,
+                    text = "|CFFFF8C00[Live] " .. k .. Statics.StringReset,  -- Orange color for Live variables
+                    isLiveVariable = true
+                }
+                table.insert(tree.children, node)
+            end
         end
 
         return tree
@@ -4635,21 +4693,42 @@ end]],
                         MenuUtil.CreateContextMenu(
                             editframe.frame,
                             function(ownerRegion, rootDescription)
-                                rootDescription:CreateTitle(L["Manage Variables"])
-                                rootDescription:CreateButton(
-                                    L["Export Variable"],
-                                    function()
-                                        GSE.GUIExport(nil, key, "VARIABLE")
-                                    end
-                                )
-                                rootDescription:CreateButton(
-                                    L["Delete"],
-                                    function()
-                                        GSE.V[key] = nil
-                                        GSEVariables[key] = nil
-                                        editframe.ManageTree()
-                                    end
-                                )
+                                if GSE.LiveVariableTimers and GSE.LiveVariableTimers[key] then
+                                    -- This is a Live Variable
+                                    rootDescription:CreateTitle(L["Manage Live Variables"])
+                                    local debugText = (GSE.LiveVariableDebug and GSE.LiveVariableDebug[key]) and
+                                                    L["Disable Debug Mode"] or L["Enable Debug Mode"]
+                                    rootDescription:CreateButton(
+                                        debugText,
+                                        function()
+                                            GSE.ToggleLiveVariableDebug(key)
+                                        end
+                                    )
+                                    rootDescription:CreateButton(
+                                        L["Delete Live Variable"],
+                                        function()
+                                            GSE.StopLiveVariableTimer(key)
+                                            editframe.ManageTree()
+                                        end
+                                    )
+                                else
+                                    -- This is a regular Variable
+                                    rootDescription:CreateTitle(L["Manage Variables"])
+                                    rootDescription:CreateButton(
+                                        L["Export Variable"],
+                                        function()
+                                            GSE.GUIExport(nil, key, "VARIABLE")
+                                        end
+                                    )
+                                    rootDescription:CreateButton(
+                                        L["Delete"],
+                                        function()
+                                            GSE.V[key] = nil
+                                            GSEVariables[key] = nil
+                                            editframe.ManageTree()
+                                        end
+                                    )
+                                end
                             end
                         )
                     elseif area == "Macro" then
@@ -4987,7 +5066,11 @@ end]],
                                 showVariable("NewVariable", container)
                             elseif key == "NEWLIVEVARIABLES" then
                                 showLiveVariable("NewLiveVariable", container)
+                            elseif GSE.LiveVariableTimers and GSE.LiveVariableTimers[key] then
+                                -- This is an existing Live Variable
+                                showLiveVariable(key, container)
                             else
+                                -- This is a regular variable
                                 showVariable(key, container)
                             end
                             editframe.loaded = true

@@ -9,6 +9,7 @@ local GNOME = "LiveVariables"
 GSE.LiveVariables = {}
 GSE.LiveVariableTimers = {}
 GSE.LiveVariableCache = {}
+GSE.LiveVariableDebug = {}  -- Store debug state for each variable
 
 local LiveVariableDefaults = {
     updateInterval = 100, -- ms
@@ -80,6 +81,14 @@ local function ExecuteLiveVariableCode(code, varName)
             timestamp = GetTime(),
             error = nil
         }
+
+        -- Debug output if enabled for this variable
+        if GSE.LiveVariableDebug[varName] then
+            local debugMsg = string.format("[LiveVar Debug] %s = %s", varName, tostring(result))
+            print(debugMsg)  -- Print to chat
+            GSE.PrintDebugMessage(debugMsg, GNOME)
+        end
+
         return result
     else
         GSE.LiveVariableCache[varName] = {
@@ -87,13 +96,20 @@ local function ExecuteLiveVariableCode(code, varName)
             timestamp = GetTime(),
             error = result
         }
+
+        -- Debug output for errors if enabled for this variable
+        if GSE.LiveVariableDebug[varName] then
+            local errorMsg = string.format("[LiveVar Error] %s: %s", varName, tostring(result))
+            print(errorMsg)  -- Print to chat
+        end
+
         GSE.PrintDebugMessage("Error in LiveLua variable '" .. varName .. "': " .. tostring(result), GNOME)
         return nil
     end
 end
 
 -- Function to create a timer for a LiveLua variable
-function GSE.CreateLiveVariableTimer(varName, code, updateInterval)
+function GSE.CreateLiveVariableTimer(varName, code, updateInterval, debugMode)
     -- Ensure GSEOptions.LiveVariables is initialized
     if not GSEOptions or not GSEOptions.LiveVariables then
         GSEOptions = GSEOptions or {}
@@ -115,6 +131,16 @@ function GSE.CreateLiveVariableTimer(varName, code, updateInterval)
 
     -- Stop existing timer if there is one
     GSE.StopLiveVariableTimer(varName)
+
+    -- Set debug mode for this variable
+    if debugMode ~= nil then
+        GSE.LiveVariableDebug[varName] = debugMode
+        if debugMode then
+            print(string.format("[LiveVar Debug] Debug mode enabled for '%s'", varName))
+        end
+    else
+        GSE.LiveVariableDebug[varName] = false
+    end
 
     -- Check variable count limit
     local currentCount = 0
@@ -145,6 +171,13 @@ function GSE.StopLiveVariableTimer(varName)
         GSE.LiveVariableTimers[varName]:Cancel()
         GSE.LiveVariableTimers[varName] = nil
         GSE.LiveVariableCache[varName] = nil
+
+        -- Clean up debug state and notify if it was in debug mode
+        if GSE.LiveVariableDebug[varName] then
+            print(string.format("[LiveVar Debug] Debug mode disabled for '%s' (variable deleted)", varName))
+        end
+        GSE.LiveVariableDebug[varName] = nil
+
         GSE.PrintDebugMessage("LiveLua timer stopped for '" .. varName .. "'", GNOME)
     end
 end
@@ -162,6 +195,21 @@ function GSE.GetLiveVariableValue(varName)
     return nil
 end
 
+-- Function to toggle debug mode for a LiveLua variable
+function GSE.ToggleLiveVariableDebug(varName)
+    if not GSE.LiveVariableTimers[varName] then
+        return false, "Variable '" .. varName .. "' does not exist"
+    end
+
+    GSE.LiveVariableDebug[varName] = not GSE.LiveVariableDebug[varName]
+    local isEnabled = GSE.LiveVariableDebug[varName]
+    local message = string.format("[LiveVar Debug] Debug mode %s for '%s'",
+                                isEnabled and "enabled" or "disabled", varName)
+    print(message)
+
+    return true, message
+end
+
 -- Function to cleanup all timers (used on logout)
 function GSE.CleanupLiveVariables()
     GSE.PrintDebugMessage("Cleaning up LiveLua variables...", GNOME)
@@ -170,6 +218,7 @@ function GSE.CleanupLiveVariables()
     end
     GSE.LiveVariableTimers = {}
     GSE.LiveVariableCache = {}
+    GSE.LiveVariableDebug = {}
 end
 
 -- Function to get statistics on LiveLua variables

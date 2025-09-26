@@ -813,6 +813,13 @@ L["New Variable"] = true
 L["New Live Variable"] = true
 L["Live Variable Code"] = true
 L["Update Interval (ms)"] = true
+L["Debug Mode (Chat Output)"] = true
+L["Debug Mode"] = true
+L["When enabled, the variable value will be printed to chat each time it updates. Useful for testing."] = true
+L["Manage Live Variables"] = true
+L["Delete Live Variable"] = true
+L["Enable Debug Mode"] = true
+L["Disable Debug Mode"] = true
 
 L["WhatsNew"] =
     "|cFFFFFFFFGS|r|cFF00FFFFE|r 3.2.28 changes the import and export strings.  Each GSE import will now start with !GSEx! where the x shows the version number going forward.  https://wago.io/gse has been updated toi handle these new import strings and wago.io exports will switch to exporting these style strings around 11.2.  These new strings will be picked up by the classic variants when they are next updated by Blizzard.  As always details are in Discord."
