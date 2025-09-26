@@ -3351,7 +3351,8 @@ function GSE.CreateEditor()
             ["funct"] = [[function()
     return true
 end]],
-            ["comments"] = ""
+            ["comments"] = "",
+            ["refreshOnExecution"] = false
         }
         if not GSE.isEmpty(GSEVariables[name]) then
             local status, err =
@@ -3434,6 +3435,30 @@ end]],
         )
 
         container:AddChild(commentsEditBox)
+
+        -- Add Refresh on Execution checkbox
+        local refreshCheckbox = AceGUI:Create("CheckBox")
+        refreshCheckbox:SetLabel(L["Refresh on Execution"])
+        refreshCheckbox:SetValue(variable.refreshOnExecution or false)
+        refreshCheckbox:SetCallback(
+            "OnValueChanged",
+            function(self, event, value)
+                variable.refreshOnExecution = value
+            end
+        )
+        refreshCheckbox:SetCallback(
+            "OnEnter",
+            function()
+                GSE.CreateToolTip(L["Refresh on Execution"], L["When enabled, this variable will be recalculated every time a sequence is executed, providing real-time values without continuous background updates."], editframe)
+            end
+        )
+        refreshCheckbox:SetCallback(
+            "OnLeave",
+            function()
+                GSE.ClearTooltip(editframe)
+            end
+        )
+        container:AddChild(refreshCheckbox)
 
         local valueEditBox = AceGUI:Create("MultiLineEditBox")
         valueEditBox:SetLabel(L["Variable"])
@@ -4074,11 +4099,6 @@ The function must always return a value that can be used in macros.]],
                     text = L["New Variable"],
                     icon = Statics.ActionsIcons.Add
                 },
-                {
-                    value = "NEWLIVEVARIABLES",
-                    text = L["New Live Variable"],
-                    icon = Statics.ActionsIcons.Add
-                }
             }
         }
         -- Add regular variables
@@ -5183,11 +5203,6 @@ The function must always return a value that can be used in macros.]],
                             end
                             if key == "NEWVARIABLES" then
                                 showVariable("NewVariable", container)
-                            elseif key == "NEWLIVEVARIABLES" then
-                                showLiveVariable("NewLiveVariable", container)
-                            elseif GSE.LiveVariableTimers and GSE.LiveVariableTimers[key] then
-                                -- This is an existing Live Variable
-                                showLiveVariable(key, container)
                             else
                                 -- This is a regular variable
                                 showVariable(key, container)

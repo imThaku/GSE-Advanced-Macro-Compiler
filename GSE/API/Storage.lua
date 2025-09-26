@@ -24,6 +24,37 @@ local function manageMissingVariable(varname)
     end
 end
 
+-- Function to refresh variables marked for execution refresh
+local function refreshExecutionVariables()
+    if GSE.isEmpty(GSEVariables) then
+        return
+    end
+
+    for varName, compressedData in pairs(GSEVariables) do
+        local status, err = pcall(function()
+            local _, uncompressedVersion = GSE.DecodeMessage(compressedData)
+
+            -- Check if this variable should be refreshed on execution
+            if uncompressedVersion.refreshOnExecution then
+                -- Re-execute the variable function to get fresh value
+                local actualfunct, error = loadstring("return " .. uncompressedVersion.funct)
+                if error then
+                    GSE.PrintDebugMessage("Error refreshing variable '" .. varName .. "': " .. error, GNOME)
+                else
+                    if type(actualfunct) == "function" then
+                        GSE.V[varName] = actualfunct()
+                        GSE.PrintDebugMessage("Refreshed execution variable: " .. varName, GNOME)
+                    end
+                end
+            end
+        end)
+
+        if not status then
+            GSE.PrintDebugMessage("Error processing execution refresh for variable '" .. varName .. "': " .. tostring(err), GNOME)
+        end
+    end
+end
+
 function GSE.CloneSequence(orig)
     local orig_type = type(orig)
     local copy
@@ -114,22 +145,21 @@ function GSE.LoadVariables()
             function()
                 local localsuccess, uncompressedVersion = GSE.DecodeMessage(v)
 
-                -- Handle LiveLua variables
+                -- Handle LiveLua variables (deprecated - use refreshOnExecution instead)
                 if uncompressedVersion.type == "LiveLua" then
-                    -- Create a function that returns the LiveLua variable value
-                    GSE.V[k] = function()
-                        return GSE.GetLiveVariableValue(k)
-                    end
-
-                    -- Start the timer for this variable
-                    if uncompressedVersion.code and uncompressedVersion.updateInterval then
-                        GSE.CreateLiveVariableTimer(k, uncompressedVersion.code, uncompressedVersion.updateInterval)
-                    else
-                        GSE.Print("Error: LiveLua variable '" .. k .. "' missing code or updateInterval")
-                    end
+                    GSE.PrintDebugMessage("LiveLua variable '" .. k .. "' found but LiveLua system is deprecated. Please recreate as regular variable with 'Refresh on Execution'.", GNOME)
                 else
                     -- Classic variables
-                    GSE.V[k] = loadstring("return " .. uncompressedVersion.funct)()
+                    local actualfunct = loadstring("return " .. uncompressedVersion.funct)()
+
+                    -- If refreshOnExecution is true, store the function for on-demand execution
+                    if uncompressedVersion.refreshOnExecution then
+                        GSE.V[k] = actualfunct  -- Store function for on-demand execution
+                        GSE.PrintDebugMessage("Loaded variable '" .. k .. "' with refresh on execution", GNOME)
+                    else
+                        -- Traditional behavior: evaluate once and store the result
+                        GSE.V[k] = actualfunct
+                    end
                 end
 
                 if GSE.V[k] and type(GSE.V[k]()) == "boolean" then
@@ -973,6 +1003,9 @@ function GSE.CompileTemplate(macro)
         -- return early nothing to compile
         return {}
     end
+
+    -- Refresh variables marked for execution refresh
+    refreshExecutionVariables()
     -- print(#macro.Actions)
     local template = GSE.CloneSequence(macro)
     setmetatable(
@@ -1240,22 +1273,9 @@ function GSE.UpdateVariable(variable, name, status)
     local compressedvariable = GSE.EncodeMessage(variable)
     GSEVariables[name] = compressedvariable
 
-    -- Handle LiveLua variables
+    -- Handle LiveLua variables (deprecated)
     if variable.type == "LiveLua" then
-        -- Stop old timer if it exists
-        GSE.StopLiveVariableTimer(name)
-
-        -- Create a function that returns the LiveLua variable value
-        GSE.V[name] = function()
-            return GSE.GetLiveVariableValue(name)
-        end
-
-        -- Start the new timer
-        if variable.code and variable.updateInterval then
-            GSE.CreateLiveVariableTimer(name, variable.code, variable.updateInterval)
-        else
-            GSE.Print("Error: LiveLua variable '" .. name .. "' missing code or updateInterval")
-        end
+        GSE.Print("LiveLua variables are deprecated. Please use regular variables with 'Refresh on Execution' option.", "Variables")
     else
         -- Classic variables
         local actualfunct, error = loadstring("return " .. variable.funct)
@@ -1263,7 +1283,15 @@ function GSE.UpdateVariable(variable, name, status)
             print(error)
         end
         if type(actualfunct) == "function" then
-            GSE.V[name] = actualfunct()
+            -- If refreshOnExecution is true, store the function itself, not its result
+            -- It will be refreshed before each sequence execution
+            if variable.refreshOnExecution then
+                GSE.V[name] = actualfunct()  -- Store function for on-demand execution
+                GSE.PrintDebugMessage("Variable '" .. name .. "' configured for refresh on execution", GNOME)
+            else
+                -- Traditional behavior: evaluate once and store the result
+                GSE.V[name] = actualfunct()
+            end
         end
     end
 
