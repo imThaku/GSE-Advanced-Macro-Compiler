@@ -76,31 +76,20 @@ local function ValidateUpdateInterval(interval)
     return true, nil
 end
 
--- Function to safely execute LiveLua variable code
+-- Function to safely execute LiveLua variable code (using same logic as classic variables)
 local function ExecuteLiveVariableCode(code, varName)
     local success, result = pcall(function()
-        local func
-
-        -- Check if code starts with "function()" - new format
-        local trimmedCode = code:trim()
-        if trimmedCode:match("^function%s*%(") then
-            -- New format: complete function definition
-            func = loadstring(code)
-            if func then
-                -- Execute the code to get the function, then call it
-                local userFunc = func()
-                if type(userFunc) == "function" then
-                    return userFunc()
-                else
-                    -- If it's not a function, return the value directly
-                    return userFunc
-                end
-            end
-        else
-            -- Old format: expression with "return" prefix
-            func = loadstring("return " .. code)
-            if func then
-                return func()
+        -- Use the exact same logic as classic GSE variables
+        -- Create the function using loadstring("return " .. code) and execute it immediately
+        local func = loadstring("return " .. code)
+        if func then
+            -- Execute to get the function, then call it to get the result
+            local userFunc = func()
+            if type(userFunc) == "function" then
+                return userFunc()
+            else
+                -- Fallback for non-function returns
+                return userFunc
             end
         end
 
@@ -198,10 +187,20 @@ function GSE.CreateLiveVariableTimer(varName, code, updateInterval, debugMode)
         return false
     end
 
+    -- Create the function and add it to GSE.V exactly like classic variables
+    local success, compileError = pcall(function()
+        GSE.V[varName] = loadstring("return " .. code)()
+    end)
+
+    if not success then
+        GSE.Print(L["LiveLua variable error "] .. varName .. ": " .. tostring(compileError), GNOME)
+        return false
+    end
+
     -- Initial execution to have a value immediately
     ExecuteLiveVariableCode(code, varName)
 
-    -- Create timer with specified interval
+    -- Create timer with specified interval - this will keep updating the cached value
     GSE.LiveVariableTimers[varName] = C_Timer.NewTicker(updateInterval / 1000, function()
         ExecuteLiveVariableCode(code, varName)
     end)
@@ -216,6 +215,9 @@ function GSE.StopLiveVariableTimer(varName)
         GSE.LiveVariableTimers[varName]:Cancel()
         GSE.LiveVariableTimers[varName] = nil
         GSE.LiveVariableCache[varName] = nil
+
+        -- Clean up from GSE.V like classic variables
+        GSE.V[varName] = nil
 
         -- Clean up debug state and notify if it was in debug mode
         if GSE.LiveVariableDebug[varName] then
@@ -233,6 +235,15 @@ end
 
 -- Function to get current value of a LiveLua variable
 function GSE.GetLiveVariableValue(varName)
+    -- First try to get from GSE.V like classic variables
+    if GSE.V[varName] and type(GSE.V[varName]) == "function" then
+        local success, result = pcall(GSE.V[varName])
+        if success then
+            return result
+        end
+    end
+
+    -- Fallback to cached value
     if GSE.LiveVariableCache[varName] then
         local cache = GSE.LiveVariableCache[varName]
         if cache.error then
