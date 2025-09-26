@@ -3763,9 +3763,25 @@ end]],
         editframe.SequenceName = name
         local implementation = AceGUI:Create("EditBox")
         local liveVariable = {
-            code = "UnitHealth('player')",
+            code = [[function()
+    return UnitHealth("player")
+end]],
             updateInterval = 100,
-            comments = "",
+            comments = [[Live Variable - Use the same format as regular GSE variables:
+
+function()
+    local buffName = "Killing Machine"
+    local buff = select(1, AuraUtil.FindAuraByName(buffName, "player", "HELPFUL"))
+    return buff and select(3, AuraUtil.FindAuraByName(buffName, "player", "HELPFUL")) or 0
+end
+
+More examples:
+• Health percentage: return math.floor((UnitHealth("player") / UnitHealthMax("player")) * 100)
+• Power check: return UnitPower("player") > 50 and 1 or 0
+• Combat state: return UnitAffectingCombat("player") and 1 or 0
+• Target exists: return UnitExists("target") and 1 or 0
+
+The function must always return a value that can be used in macros.]],
             Author = GSE.GetCharacterName(),
             debugMode = false
         }
@@ -3773,14 +3789,26 @@ end]],
         -- If this is an existing Live Variable, get its current settings
         local isExisting = GSE.LiveVariableTimers and GSE.LiveVariableTimers[name]
         if isExisting then
-            -- Try to get stored settings or use defaults
-            liveVariable = {
-                code = "-- Live Variable Code (current settings not stored)",
-                updateInterval = 100,  -- Default, actual interval not easily retrievable
-                comments = "Existing Live Variable: " .. name,
-                Author = GSE.GetCharacterName(),
-                debugMode = GSE.LiveVariableDebug and GSE.LiveVariableDebug[name] or false
-            }
+            -- Get stored settings from persistent storage
+            local storedSettings = GSE.GetLiveVariableSettings(name)
+            if storedSettings then
+                liveVariable = {
+                    code = storedSettings.code or "-- Code not found",
+                    updateInterval = storedSettings.updateInterval or 100,
+                    comments = storedSettings.comments or ("Live Variable: " .. name),
+                    Author = storedSettings.Author or GSE.GetCharacterName(),
+                    debugMode = storedSettings.debugMode or false
+                }
+            else
+                -- Fallback if no stored settings found
+                liveVariable = {
+                    code = "-- Settings not found (variable may need to be recreated)",
+                    updateInterval = 100,
+                    comments = "Existing Live Variable: " .. name,
+                    Author = GSE.GetCharacterName(),
+                    debugMode = GSE.LiveVariableDebug and GSE.LiveVariableDebug[name] or false
+                }
+            end
         end
 
         local keyEditBox = AceGUI:Create("EditBox")
@@ -3862,7 +3890,7 @@ end]],
 
         local codeEditBox = AceGUI:Create("MultiLineEditBox")
         codeEditBox:SetLabel(L["Live Variable Code"])
-        codeEditBox:SetNumLines(10)
+        codeEditBox:SetNumLines(15)
         codeEditBox:SetFullWidth(true)
         codeEditBox:DisableButton(true)
         codeEditBox:SetText(liveVariable.code)
@@ -3872,6 +3900,17 @@ end]],
                 liveVariable.code = text
             end
         )
+        codeEditBox:SetCallback(
+            "OnEditFocusLost",
+            function()
+                liveVariable.code = codeEditBox:GetText()
+            end
+        )
+
+        -- Enable syntax highlighting for Lua code
+        if IndentationLib and IndentationLib.enable then
+            IndentationLib.enable(codeEditBox.editBox, Statics.IndentationColorTable, 4)
+        end
 
         container:AddChild(codeEditBox)
 
@@ -3909,10 +3948,18 @@ end]],
                     local debugMode = debugCheckBox:GetValue()
                     local success = GSE.CreateLiveVariableTimer(varName, code, interval, debugMode)
                     if success then
-                        GSE.Print("Live Variable '" .. varName .. "' created successfully!" .. (debugMode and " (Debug Mode ON)" or ""), "LiveVariables")
+                        -- Save additional settings like comments and author
+                        if GSE.LiveVariableSettings[varName] then
+                            GSE.LiveVariableSettings[varName].comments = commentsEditBox:GetText() or ""
+                            GSE.LiveVariableSettings[varName].Author = authoreditbox:GetText() or GSE.GetCharacterName()
+                            GSEOptions.LiveVariableSettings = GSE.LiveVariableSettings
+                        end
+
+                        local actionText = isExisting and "updated" or "created"
+                        GSE.Print("Live Variable '" .. varName .. "' " .. actionText .. " successfully!" .. (debugMode and " (Debug Mode ON)" or ""), "LiveVariables")
                         editframe.ManageTree()
                     else
-                        GSE.Print("Failed to create Live Variable '" .. varName .. "'", "LiveVariables")
+                        GSE.Print("Failed to save Live Variable '" .. varName .. "'", "LiveVariables")
                     end
                 else
                     GSE.Print("Please fill in both name and code fields", "LiveVariables")

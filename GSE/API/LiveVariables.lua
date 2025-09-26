@@ -10,6 +10,7 @@ GSE.LiveVariables = {}
 GSE.LiveVariableTimers = {}
 GSE.LiveVariableCache = {}
 GSE.LiveVariableDebug = {}  -- Store debug state for each variable
+GSE.LiveVariableSettings = {}  -- Store persistent settings for each variable
 
 local LiveVariableDefaults = {
     updateInterval = 100, -- ms
@@ -26,6 +27,12 @@ end
 if not GSEOptions.LiveVariables then
     GSEOptions.LiveVariables = LiveVariableDefaults
 end
+if not GSEOptions.LiveVariableSettings then
+    GSEOptions.LiveVariableSettings = {}
+end
+
+-- Initialize runtime settings from saved data
+GSE.LiveVariableSettings = GSEOptions.LiveVariableSettings or {}
 
 -- Utility function to validate Lua code
 local function ValidateLuaCode(code)
@@ -33,10 +40,14 @@ local function ValidateLuaCode(code)
         return false, L["LiveLua code cannot be empty"]
     end
 
-    -- Test code compilation
-    local testFunc, err = loadstring("return " .. code)
+    -- Test code compilation - try as complete function first
+    local testFunc, err = loadstring(code)
     if not testFunc then
-        return false, L["Lua syntax error: "] .. tostring(err)
+        -- If it fails, try with "return " prefix for backward compatibility
+        testFunc, err = loadstring("return " .. code)
+        if not testFunc then
+            return false, L["Lua syntax error: "] .. tostring(err)
+        end
     end
 
     return true, nil
@@ -68,10 +79,27 @@ end
 -- Function to safely execute LiveLua variable code
 local function ExecuteLiveVariableCode(code, varName)
     local success, result = pcall(function()
-        local func = loadstring("return " .. code)
+        local func
+
+        -- Try to load as complete function first (new format)
+        func = loadstring(code)
         if func then
-            return func()
+            -- Execute the function and get its result
+            local compiledFunc = func()
+            if type(compiledFunc) == "function" then
+                return compiledFunc()
+            else
+                -- If it's not a function, return the value directly
+                return compiledFunc
+            end
+        else
+            -- Fallback to old format (expression with "return" prefix)
+            func = loadstring("return " .. code)
+            if func then
+                return func()
+            end
         end
+
         return nil
     end)
 
@@ -142,6 +170,19 @@ function GSE.CreateLiveVariableTimer(varName, code, updateInterval, debugMode)
         GSE.LiveVariableDebug[varName] = false
     end
 
+    -- Store persistent settings (preserve existing comments and author if updating)
+    local existingSettings = GSE.LiveVariableSettings[varName]
+    GSE.LiveVariableSettings[varName] = {
+        code = code,
+        updateInterval = updateInterval,
+        debugMode = GSE.LiveVariableDebug[varName] or false,
+        created = existingSettings and existingSettings.created or GetTime(),
+        updated = GetTime(),
+        Author = existingSettings and existingSettings.Author or GSE.GetCharacterName(),
+        comments = existingSettings and existingSettings.comments or ""
+    }
+    GSEOptions.LiveVariableSettings = GSE.LiveVariableSettings
+
     -- Check variable count limit
     local currentCount = 0
     for _ in pairs(GSE.LiveVariableTimers) do
@@ -178,6 +219,10 @@ function GSE.StopLiveVariableTimer(varName)
         end
         GSE.LiveVariableDebug[varName] = nil
 
+        -- Clean up persistent settings
+        GSE.LiveVariableSettings[varName] = nil
+        GSEOptions.LiveVariableSettings = GSE.LiveVariableSettings
+
         GSE.PrintDebugMessage("LiveLua timer stopped for '" .. varName .. "'", GNOME)
     end
 end
@@ -195,6 +240,11 @@ function GSE.GetLiveVariableValue(varName)
     return nil
 end
 
+-- Function to get persistent settings for a LiveLua variable
+function GSE.GetLiveVariableSettings(varName)
+    return GSE.LiveVariableSettings[varName]
+end
+
 -- Function to toggle debug mode for a LiveLua variable
 function GSE.ToggleLiveVariableDebug(varName)
     if not GSE.LiveVariableTimers[varName] then
@@ -203,6 +253,13 @@ function GSE.ToggleLiveVariableDebug(varName)
 
     GSE.LiveVariableDebug[varName] = not GSE.LiveVariableDebug[varName]
     local isEnabled = GSE.LiveVariableDebug[varName]
+
+    -- Update persistent settings
+    if GSE.LiveVariableSettings[varName] then
+        GSE.LiveVariableSettings[varName].debugMode = isEnabled
+        GSEOptions.LiveVariableSettings = GSE.LiveVariableSettings
+    end
+
     local message = string.format("[LiveVar Debug] Debug mode %s for '%s'",
                                 isEnabled and "enabled" or "disabled", varName)
     print(message)
@@ -219,6 +276,7 @@ function GSE.CleanupLiveVariables()
     GSE.LiveVariableTimers = {}
     GSE.LiveVariableCache = {}
     GSE.LiveVariableDebug = {}
+    -- Note: GSE.LiveVariableSettings is kept for persistence across sessions
 end
 
 -- Function to get statistics on LiveLua variables
@@ -288,6 +346,34 @@ liveVariableEventFrame:SetScript("OnEvent", function(self, event)
         if cacheCleanupTimer then
             cacheCleanupTimer:Cancel()
         end
+    end
+end)
+
+-- Function to restore LiveLua variables from saved settings
+function GSE.RestoreLiveVariables()
+    if not GSE.LiveVariableSettings then
+        return
+    end
+
+    for varName, settings in pairs(GSE.LiveVariableSettings) do
+        if settings.code and settings.updateInterval then
+            local success = GSE.CreateLiveVariableTimer(varName, settings.code, settings.updateInterval, settings.debugMode)
+            if success then
+                GSE.PrintDebugMessage("Restored LiveLua variable '" .. varName .. "'", GNOME)
+            else
+                GSE.PrintDebugMessage("Failed to restore LiveLua variable '" .. varName .. "'", GNOME)
+            end
+        end
+    end
+end
+
+-- Restore variables after addon is fully loaded
+local restoreFrame = CreateFrame("Frame")
+restoreFrame:RegisterEvent("ADDON_LOADED")
+restoreFrame:SetScript("OnEvent", function(self, event, addonName)
+    if addonName == "GSE" then
+        C_Timer.After(2, GSE.RestoreLiveVariables)  -- Small delay to ensure everything is loaded
+        restoreFrame:UnregisterEvent("ADDON_LOADED")
     end
 end)
 
