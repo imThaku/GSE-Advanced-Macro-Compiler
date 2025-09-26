@@ -3767,6 +3767,7 @@ end]],
     return UnitHealth("player")
 end]],
             updateInterval = 100,
+            loadConditions = {},
             comments = [[Live Variable - Use the same format as regular GSE variables:
 
 function()
@@ -3795,6 +3796,7 @@ The function must always return a value that can be used in macros.]],
                 liveVariable = {
                     code = storedSettings.code or "-- Code not found",
                     updateInterval = storedSettings.updateInterval or 100,
+                    loadConditions = storedSettings.loadConditions or {},
                     comments = storedSettings.comments or ("Live Variable: " .. name),
                     Author = storedSettings.Author or GSE.GetCharacterName(),
                     debugMode = storedSettings.debugMode or false
@@ -3804,6 +3806,7 @@ The function must always return a value that can be used in macros.]],
                 liveVariable = {
                     code = "-- Settings not found (variable may need to be recreated)",
                     updateInterval = 100,
+                    loadConditions = {},
                     comments = "Existing Live Variable: " .. name,
                     Author = GSE.GetCharacterName(),
                     debugMode = GSE.LiveVariableDebug and GSE.LiveVariableDebug[name] or false
@@ -3857,6 +3860,74 @@ The function must always return a value that can be used in macros.]],
         )
 
         container:AddChild(updateIntervalBox)
+
+        -- Load Conditions MultiSelectGroup
+        local loadConditionsGroup = AceGUI:Create("SimpleGroup")
+        loadConditionsGroup:SetLayout("Flow")
+        loadConditionsGroup:SetFullWidth(true)
+
+        local loadConditionsLabel = AceGUI:Create("Label")
+        loadConditionsLabel:SetText(L["Load Conditions"])
+        loadConditionsLabel:SetWidth(150)
+        loadConditionsGroup:AddChild(loadConditionsLabel)
+
+        -- Create checkboxes for each load condition
+        local conditionCheckBoxes = {}
+        local availableConditions = GSE.GetLiveVariableLoadConditions()
+        local checkboxCount = 0
+
+        for conditionKey, conditionName in pairs(availableConditions) do
+            local checkbox = AceGUI:Create("CheckBox")
+            checkbox:SetLabel(conditionName)
+            checkbox:SetWidth(150)
+            checkbox:SetTriState(false)
+
+            -- Check if this condition is already selected
+            local isSelected = false
+            if liveVariable.loadConditions then
+                for _, selectedCondition in ipairs(liveVariable.loadConditions) do
+                    if selectedCondition == conditionKey then
+                        isSelected = true
+                        break
+                    end
+                end
+            end
+            checkbox:SetValue(isSelected)
+
+            checkbox:SetCallback("OnValueChanged", function(self, event, value)
+                -- Update the loadConditions array
+                if not liveVariable.loadConditions then
+                    liveVariable.loadConditions = {}
+                end
+
+                if value then
+                    -- Add condition
+                    table.insert(liveVariable.loadConditions, conditionKey)
+                else
+                    -- Remove condition
+                    for i, condition in ipairs(liveVariable.loadConditions) do
+                        if condition == conditionKey then
+                            table.remove(liveVariable.loadConditions, i)
+                            break
+                        end
+                    end
+                end
+            end)
+
+            conditionCheckBoxes[conditionKey] = checkbox
+            loadConditionsGroup:AddChild(checkbox)
+
+            -- Add line break every 3 checkboxes for better layout
+            checkboxCount = checkboxCount + 1
+            if checkboxCount % 3 == 0 then
+                local lineBreak = AceGUI:Create("Label")
+                lineBreak:SetText("")
+                lineBreak:SetFullWidth(true)
+                loadConditionsGroup:AddChild(lineBreak)
+            end
+        end
+
+        container:AddChild(loadConditionsGroup)
 
         local debugCheckBox = AceGUI:Create("CheckBox")
         debugCheckBox:SetLabel(L["Debug Mode (Chat Output)"])
@@ -3946,13 +4017,14 @@ The function must always return a value that can be used in macros.]],
 
                 if varName and varName ~= "" and code and code ~= "" then
                     local debugMode = debugCheckBox:GetValue()
-                    local success = GSE.CreateLiveVariableTimer(varName, code, interval, debugMode)
+                    local loadConditions = liveVariable.loadConditions or {}
+                    local success = GSE.CreateLiveVariableTimer(varName, code, interval, debugMode, loadConditions)
                     if success then
                         -- Save additional settings like comments and author
                         if GSE.LiveVariableSettings[varName] then
                             GSE.LiveVariableSettings[varName].comments = commentsEditBox:GetText() or ""
                             GSE.LiveVariableSettings[varName].Author = authoreditbox:GetText() or GSE.GetCharacterName()
-                            GSEOptions.LiveVariableSettings = GSE.LiveVariableSettings
+                            GSE.SaveLiveVariableSettings()
                         end
 
                         local actionText = isExisting and "updated" or "created"

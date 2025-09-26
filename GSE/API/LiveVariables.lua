@@ -20,6 +20,70 @@ local LiveVariableDefaults = {
     cacheTimeout = 30000, -- 30 seconds before cache cleanup
 }
 
+-- Load conditions for Live Variables (inspired by WeakAuras)
+local LiveVariableLoadConditions = {
+    ["Always"] = {
+        name = L["Always"],
+        check = function() return true end
+    },
+    ["In Combat"] = {
+        name = L["In Combat"],
+        check = function() return UnitAffectingCombat("player") end
+    },
+    ["Not In Combat"] = {
+        name = L["Not In Combat"],
+        check = function() return not UnitAffectingCombat("player") end
+    },
+    ["Alive"] = {
+        name = L["Alive"],
+        check = function() return not UnitIsDeadOrGhost("player") end
+    },
+    ["Dead"] = {
+        name = L["Dead"],
+        check = function() return UnitIsDeadOrGhost("player") end
+    },
+    ["In Group"] = {
+        name = L["In Group"],
+        check = function() return IsInGroup() end
+    },
+    ["In Raid"] = {
+        name = L["In Raid"],
+        check = function() return IsInRaid() end
+    },
+    ["In Instance"] = {
+        name = L["In Instance"],
+        check = function() return IsInInstance() end
+    },
+    ["In PvP"] = {
+        name = L["In PvP"],
+        check = function() return UnitIsPVP("player") end
+    },
+    ["Has Target"] = {
+        name = L["Has Target"],
+        check = function() return UnitExists("target") end
+    },
+    ["Target Is Enemy"] = {
+        name = L["Target Is Enemy"],
+        check = function() return UnitExists("target") and UnitCanAttack("player", "target") end
+    },
+    ["Mounted"] = {
+        name = L["Mounted"],
+        check = function() return IsMounted() end
+    },
+    ["Not Mounted"] = {
+        name = L["Not Mounted"],
+        check = function() return not IsMounted() end
+    },
+    ["In Vehicle"] = {
+        name = L["In Vehicle"],
+        check = function() return UnitInVehicle("player") end
+    },
+    ["Not In Vehicle"] = {
+        name = L["Not In Vehicle"],
+        check = function() return not UnitInVehicle("player") end
+    }
+}
+
 -- Default configuration for options
 if not GSEOptions then
     GSEOptions = {}
@@ -33,6 +97,42 @@ end
 
 -- Initialize runtime settings from saved data
 GSE.LiveVariableSettings = GSEOptions.LiveVariableSettings or {}
+
+-- Function to force save Live Variable settings
+function GSE.SaveLiveVariableSettings()
+    if GSEOptions then
+        GSEOptions.LiveVariableSettings = GSE.LiveVariableSettings
+        GSE.PrintDebugMessage("Forced save of Live Variable settings", GNOME)
+    end
+end
+
+-- Function to check if load conditions are met for a variable
+local function CheckLoadConditions(varName)
+    local settings = GSE.LiveVariableSettings[varName]
+    if not settings or not settings.loadConditions or #settings.loadConditions == 0 then
+        -- No conditions specified, always load
+        return true
+    end
+
+    -- Check all specified conditions (AND logic - all must be true)
+    for _, conditionKey in ipairs(settings.loadConditions) do
+        local condition = LiveVariableLoadConditions[conditionKey]
+        if condition and not condition.check() then
+            return false
+        end
+    end
+
+    return true
+end
+
+-- Function to get available load conditions
+function GSE.GetLiveVariableLoadConditions()
+    local conditions = {}
+    for key, condition in pairs(LiveVariableLoadConditions) do
+        conditions[key] = condition.name
+    end
+    return conditions
+end
 
 -- Utility function to validate Lua code
 local function ValidateLuaCode(code)
@@ -78,6 +178,26 @@ end
 
 -- Function to safely execute LiveLua variable code (using same logic as classic variables)
 local function ExecuteLiveVariableCode(code, varName)
+    -- Check load conditions before executing
+    if not CheckLoadConditions(varName) then
+        -- Store a special "not loaded" state in cache
+        GSE.LiveVariableCache[varName] = {
+            value = nil,
+            timestamp = GetTime(),
+            error = nil,
+            notLoaded = true
+        }
+
+        -- Debug output if enabled for this variable
+        if GSE.LiveVariableDebug[varName] then
+            local debugMsg = string.format("[LiveVar Debug] %s = <not loaded> (conditions not met)", varName)
+            print(debugMsg)
+            GSE.PrintDebugMessage(debugMsg, GNOME)
+        end
+
+        return nil
+    end
+
     local success, result = pcall(function()
         -- Use the exact same logic as classic GSE variables
         -- Create the function using loadstring("return " .. code) and execute it immediately
@@ -100,7 +220,8 @@ local function ExecuteLiveVariableCode(code, varName)
         GSE.LiveVariableCache[varName] = {
             value = result,
             timestamp = GetTime(),
-            error = nil
+            error = nil,
+            notLoaded = false
         }
 
         -- Debug output if enabled for this variable
@@ -130,7 +251,7 @@ local function ExecuteLiveVariableCode(code, varName)
 end
 
 -- Function to create a timer for a LiveLua variable
-function GSE.CreateLiveVariableTimer(varName, code, updateInterval, debugMode)
+function GSE.CreateLiveVariableTimer(varName, code, updateInterval, debugMode, loadConditions)
     -- Ensure GSEOptions.LiveVariables is initialized
     if not GSEOptions or not GSEOptions.LiveVariables then
         GSEOptions = GSEOptions or {}
@@ -169,12 +290,13 @@ function GSE.CreateLiveVariableTimer(varName, code, updateInterval, debugMode)
         code = code,
         updateInterval = updateInterval,
         debugMode = GSE.LiveVariableDebug[varName] or false,
+        loadConditions = loadConditions or {},
         created = existingSettings and existingSettings.created or GetTime(),
         updated = GetTime(),
         Author = existingSettings and existingSettings.Author or GSE.GetCharacterName(),
         comments = existingSettings and existingSettings.comments or ""
     }
-    GSEOptions.LiveVariableSettings = GSE.LiveVariableSettings
+    GSE.SaveLiveVariableSettings()
 
     -- Check variable count limit
     local currentCount = 0
@@ -227,7 +349,7 @@ function GSE.StopLiveVariableTimer(varName)
 
         -- Clean up persistent settings
         GSE.LiveVariableSettings[varName] = nil
-        GSEOptions.LiveVariableSettings = GSE.LiveVariableSettings
+        GSE.SaveLiveVariableSettings()
 
         GSE.PrintDebugMessage("LiveLua timer stopped for '" .. varName .. "'", GNOME)
     end
@@ -272,7 +394,7 @@ function GSE.ToggleLiveVariableDebug(varName)
     -- Update persistent settings
     if GSE.LiveVariableSettings[varName] then
         GSE.LiveVariableSettings[varName].debugMode = isEnabled
-        GSEOptions.LiveVariableSettings = GSE.LiveVariableSettings
+        GSE.SaveLiveVariableSettings()
     end
 
     local message = string.format("[LiveVar Debug] Debug mode %s for '%s'",
@@ -366,30 +488,97 @@ end)
 
 -- Function to restore LiveLua variables from saved settings
 function GSE.RestoreLiveVariables()
-    if not GSE.LiveVariableSettings then
+    -- Re-initialize from saved options to ensure we have the latest data
+    if GSEOptions and GSEOptions.LiveVariableSettings then
+        GSE.LiveVariableSettings = GSEOptions.LiveVariableSettings
+    else
+        GSE.PrintDebugMessage("No saved LiveVariable settings found", GNOME)
         return
     end
 
+    local restoredCount = 0
     for varName, settings in pairs(GSE.LiveVariableSettings) do
         if settings.code and settings.updateInterval then
-            local success = GSE.CreateLiveVariableTimer(varName, settings.code, settings.updateInterval, settings.debugMode)
+            local success = GSE.CreateLiveVariableTimer(
+                varName,
+                settings.code,
+                settings.updateInterval,
+                settings.debugMode,
+                settings.loadConditions
+            )
             if success then
+                restoredCount = restoredCount + 1
                 GSE.PrintDebugMessage("Restored LiveLua variable '" .. varName .. "'", GNOME)
             else
                 GSE.PrintDebugMessage("Failed to restore LiveLua variable '" .. varName .. "'", GNOME)
             end
+        else
+            GSE.PrintDebugMessage("Skipping incomplete LiveVariable settings for '" .. varName .. "'", GNOME)
         end
+    end
+
+    if restoredCount > 0 then
+        GSE.Print("Restored " .. restoredCount .. " Live Variables", "LiveVariables")
     end
 end
 
--- Restore variables after addon is fully loaded
+-- Restore variables after addon is fully loaded and player has logged in
 local restoreFrame = CreateFrame("Frame")
 restoreFrame:RegisterEvent("ADDON_LOADED")
+restoreFrame:RegisterEvent("PLAYER_LOGIN")
+
+local addonLoaded = false
+local playerLoggedIn = false
+
 restoreFrame:SetScript("OnEvent", function(self, event, addonName)
-    if addonName == "GSE" then
-        C_Timer.After(2, GSE.RestoreLiveVariables)  -- Small delay to ensure everything is loaded
+    if event == "ADDON_LOADED" and addonName == "GSE" then
+        addonLoaded = true
+        GSE.PrintDebugMessage("GSE addon loaded, waiting for player login", GNOME)
+    elseif event == "PLAYER_LOGIN" then
+        playerLoggedIn = true
+        GSE.PrintDebugMessage("Player logged in, checking if addon ready", GNOME)
+    end
+
+    -- Only restore when both conditions are met
+    if addonLoaded and playerLoggedIn then
+        C_Timer.After(3, function()  -- Increased delay to ensure everything is ready
+            GSE.PrintDebugMessage("Attempting to restore Live Variables", GNOME)
+            GSE.RestoreLiveVariables()
+        end)
         restoreFrame:UnregisterEvent("ADDON_LOADED")
+        restoreFrame:UnregisterEvent("PLAYER_LOGIN")
     end
 end)
+
+-- Debug function to check Live Variable settings
+function GSE.DebugLiveVariables()
+    print("=== Live Variables Debug Info ===")
+    print("GSEOptions exists:", GSEOptions and "YES" or "NO")
+    print("GSEOptions.LiveVariableSettings exists:", GSEOptions and GSEOptions.LiveVariableSettings and "YES" or "NO")
+    print("GSE.LiveVariableSettings exists:", GSE.LiveVariableSettings and "YES" or "NO")
+
+    if GSE.LiveVariableSettings then
+        local count = 0
+        for k, v in pairs(GSE.LiveVariableSettings) do
+            count = count + 1
+            print("Saved variable:", k, "- Has code:", v.code and "YES" or "NO", "- Interval:", v.updateInterval)
+        end
+        print("Total saved variables:", count)
+    end
+
+    if GSE.LiveVariableTimers then
+        local activeCount = 0
+        for k, v in pairs(GSE.LiveVariableTimers) do
+            activeCount = activeCount + 1
+            print("Active variable:", k)
+        end
+        print("Total active variables:", activeCount)
+    end
+    print("=== End Debug Info ===")
+end
+
+-- Slash command for debugging
+SLASH_GSELIVEDEBUG1 = "/gselivedebug"
+SlashCmdList["GSELIVEDEBUG"] = GSE.DebugLiveVariables
 
 GSE.PrintDebugMessage("LiveVariables system initialized", GNOME)
