@@ -148,32 +148,52 @@ end
 
 local function evaluateDynamicCondition(expression)
     if not expression or expression == "" then
+        print("|cFFFF0000[GSE IF DEBUG]|r Empty condition expression")
         return false
     end
 
     -- Remove leading = if present
+    local originalExpression = expression
     if string.sub(expression, 1, 1) == "=" then
         expression = string.sub(expression, 2)
     end
+
+    print("|cFF00FF00[GSE IF DEBUG]|r Evaluating condition: " .. tostring(originalExpression))
 
     local success, result = pcall(function()
         -- Special handling for GSE.V variables
         if string.find(expression, "GSE%.V%.") then
             local varName = string.match(expression, "GSE%.V%.([%w_]+)%(")
             if varName and GSE.V[varName] then
-                return GSE.V[varName]()
+                local varResult = GSE.V[varName]()
+                print("|cFF00FF00[GSE IF DEBUG]|r GSE.V." .. varName .. "() = " .. tostring(varResult))
+                return varResult
+            else
+                print("|cFFFF0000[GSE IF DEBUG]|r GSE.V variable not found: " .. tostring(varName))
+                return false
             end
         end
 
         -- Regular expression evaluation
         local func = loadstring("return " .. expression)
         if func then
-            return func()
+            local evalResult = func()
+            print("|cFF00FF00[GSE IF DEBUG]|r Expression result: " .. tostring(evalResult))
+            return evalResult
         end
+        print("|cFFFF0000[GSE IF DEBUG]|r Failed to create function from expression")
         return false
     end)
 
-    return success and result
+    if not success then
+        print("|cFFFF0000[GSE IF DEBUG]|r Error evaluating condition: " .. tostring(result))
+        return false
+    end
+
+    local finalResult = success and result
+    print("|cFF00FFFF[GSE IF DEBUG]|r Final condition result: " .. tostring(finalResult) .. " (taking " .. (finalResult and "TRUE" or "FALSE") .. " branch)")
+
+    return finalResult
 end
 ]=]
 end
@@ -242,6 +262,34 @@ function GSE.TestDynamicVariables()
     GSE.Print("Error test result: " .. tostring(errorResult), "GSE Dynamic Variables")
 
     GSE.Print("Dynamic variables test completed. Check results above.", "GSE Dynamic Variables")
+end
+
+--- Helper function to test dynamic IF blocks specifically
+function GSE.TestDynamicIF()
+    GSE.Print("Testing dynamic IF blocks...", "GSE Dynamic Variables")
+
+    -- Check if dynamic variables are enabled
+    if not (GSEOptions and GSEOptions.useDynamicVariables) then
+        GSE.Print("Dynamic variables are DISABLED. Enable them with: GSEOptions.useDynamicVariables = true", "GSE Dynamic Variables")
+        return
+    end
+
+    GSE.Print("Dynamic variables are ENABLED ✓", "GSE Dynamic Variables")
+
+    -- Check available GSE.V variables
+    local varCount = 0
+    for varName, _ in pairs(GSE.V) do
+        varCount = varCount + 1
+        GSE.Print("Available variable: GSE.V." .. varName .. "()", "GSE Dynamic Variables")
+    end
+
+    if varCount == 0 then
+        GSE.Print("No GSE.V variables found. Create some in the Variable Editor first.", "GSE Dynamic Variables")
+    else
+        GSE.Print("Found " .. varCount .. " GSE.V variables", "GSE Dynamic Variables")
+    end
+
+    GSE.Print("Now test your sequence with IF blocks. Debug messages will appear in chat when you click your button.", "GSE Dynamic Variables")
 end
 
 function GSE.CloneSequence(orig)
@@ -1151,6 +1199,8 @@ function GSE.processAction(action, metaData, variables)
 
         -- Check if dynamic variables are enabled
         if GSEOptions and GSEOptions.useDynamicVariables then
+            GSE.Print("[GSE IF COMPILE DEBUG] Creating dynamic IF with condition: " .. tostring(action.Variable), "GSE Dynamic Variables")
+
             -- Dynamic IF: Create a special action that evaluates condition at runtime
             local dynamicIfAction = {
                 type = "dynamicif",
@@ -1194,6 +1244,8 @@ function GSE.processAction(action, metaData, variables)
                     end
                 end
             end
+
+            GSE.Print("[GSE IF COMPILE DEBUG] Dynamic IF created with " .. #dynamicIfAction.trueActions .. " TRUE actions and " .. #dynamicIfAction.falseActions .. " FALSE actions", "GSE Dynamic Variables")
 
             return dynamicIfAction
         else
@@ -1429,10 +1481,14 @@ end
 
     -- Check if this is a dynamic IF action
     if currentAction.type == "dynamicif" then
+        print("|cFFFFFF00[GSE IF DEBUG]|r Detected dynamic IF action at step " .. step)
+
         -- Evaluate the condition dynamically
         local conditionResult = false
         if evaluateDynamicCondition then
             conditionResult = evaluateDynamicCondition(currentAction.condition)
+        else
+            print("|cFFFF0000[GSE IF DEBUG]|r evaluateDynamicCondition function not available!")
         end
 
         -- Choose the appropriate action based on condition
@@ -1441,14 +1497,19 @@ end
             -- Use a deterministic index based on step to cycle through true actions
             local actionIndex = ((step - 1) % #currentAction.trueActions) + 1
             actionToExecute = currentAction.trueActions[actionIndex]
+            print("|cFF00FF00[GSE IF DEBUG]|r Taking TRUE branch, action " .. actionIndex .. "/" .. #currentAction.trueActions)
         elseif not conditionResult and currentAction.falseActions and #currentAction.falseActions > 0 then
             -- Use a deterministic index based on step to cycle through false actions
             local actionIndex = ((step - 1) % #currentAction.falseActions) + 1
             actionToExecute = currentAction.falseActions[actionIndex]
+            print("|cFF00FF00[GSE IF DEBUG]|r Taking FALSE branch, action " .. actionIndex .. "/" .. #currentAction.falseActions)
+        else
+            print("|cFFFF0000[GSE IF DEBUG]|r No valid action found! conditionResult=" .. tostring(conditionResult) .. ", trueActions=" .. tostring(currentAction.trueActions and #currentAction.trueActions or "nil") .. ", falseActions=" .. tostring(currentAction.falseActions and #currentAction.falseActions or "nil"))
         end
 
         -- Set attributes from the chosen action
         if actionToExecute then
+            print("|cFF00FF00[GSE IF DEBUG]|r Executing action with spell: " .. tostring(actionToExecute.spell))
             for k, v in pairs(actionToExecute) do
                 if k == "macrotext" then
                     self:SetAttribute("macro", nil)
@@ -1462,6 +1523,8 @@ end
                     self:SetAttribute(k, v)
                 end
             end
+        else
+            print("|cFFFF0000[GSE IF DEBUG]|r No action to execute!")
         end
     else
         -- Normal action processing
@@ -1533,10 +1596,14 @@ end
 
         -- Check if this is a dynamic IF action
         if currentAction.type == "dynamicif" then
+            print("|cFFFFFF00[GSE IF DEBUG - MULTICLICK]|r Detected dynamic IF action at step " .. step)
+
             -- Evaluate the condition dynamically
             local conditionResult = false
             if evaluateDynamicCondition then
                 conditionResult = evaluateDynamicCondition(currentAction.condition)
+            else
+                print("|cFFFF0000[GSE IF DEBUG - MULTICLICK]|r evaluateDynamicCondition function not available!")
             end
 
             -- Choose the appropriate action based on condition
@@ -1545,14 +1612,19 @@ end
                 -- Use a deterministic index based on step to cycle through true actions
                 local actionIndex = ((step - 1) % #currentAction.trueActions) + 1
                 actionToExecute = currentAction.trueActions[actionIndex]
+                print("|cFF00FF00[GSE IF DEBUG - MULTICLICK]|r Taking TRUE branch, action " .. actionIndex .. "/" .. #currentAction.trueActions)
             elseif not conditionResult and currentAction.falseActions and #currentAction.falseActions > 0 then
                 -- Use a deterministic index based on step to cycle through false actions
                 local actionIndex = ((step - 1) % #currentAction.falseActions) + 1
                 actionToExecute = currentAction.falseActions[actionIndex]
+                print("|cFF00FF00[GSE IF DEBUG - MULTICLICK]|r Taking FALSE branch, action " .. actionIndex .. "/" .. #currentAction.falseActions)
+            else
+                print("|cFFFF0000[GSE IF DEBUG - MULTICLICK]|r No valid action found! conditionResult=" .. tostring(conditionResult) .. ", trueActions=" .. tostring(currentAction.trueActions and #currentAction.trueActions or "nil") .. ", falseActions=" .. tostring(currentAction.falseActions and #currentAction.falseActions or "nil"))
             end
 
             -- Set attributes from the chosen action
             if actionToExecute then
+                print("|cFF00FF00[GSE IF DEBUG - MULTICLICK]|r Executing action with spell: " .. tostring(actionToExecute.spell))
                 for k, v in pairs(actionToExecute) do
                     if k == "macrotext" then
                         self:SetAttribute("macro", nil)
@@ -1566,6 +1638,8 @@ end
                         self:SetAttribute(k, v)
                     end
                 end
+            else
+                print("|cFFFF0000[GSE IF DEBUG - MULTICLICK]|r No action to execute!")
             end
         else
             -- Normal action processing
