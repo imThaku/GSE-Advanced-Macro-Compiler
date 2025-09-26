@@ -55,6 +55,17 @@ function GSE.EvaluateVariableDynamically(varExpression, useCache)
 
     local success, result = xpcall(
         function()
+            -- Special handling for GSE.V variables - they need to be called each time
+            if string.find(varExpression, "GSE%.V%.") then
+                -- Extract the variable name from GSE.V.VariableName()
+                local varName = string.match(varExpression, "GSE%.V%.([%w_]+)%(")
+                if varName and GSE.V[varName] then
+                    -- Call the function to get fresh result
+                    return GSE.V[varName]()
+                end
+            end
+
+            -- Regular expression evaluation
             local evaluatedFunction = loadstring("return " .. varExpression)
             if evaluatedFunction then
                 return evaluatedFunction()
@@ -110,6 +121,17 @@ local function evaluateDynamicVariable(expression, fallbackValue)
     end
 
     local success, result = pcall(function()
+        -- Special handling for GSE.V variables - they need to be called each time
+        if string.find(expression, "GSE%.V%.") then
+            -- Extract the variable name from GSE.V.VariableName()
+            local varName = string.match(expression, "GSE%.V%.([%w_]+)%(")
+            if varName and GSE.V[varName] then
+                -- Call the function to get fresh result
+                return GSE.V[varName]()
+            end
+        end
+
+        -- Regular expression evaluation
         local func = loadstring("return " .. expression)
         if func then
             return func()
@@ -167,6 +189,22 @@ function GSE.TestDynamicVariables()
     local playerTestExpr = "UnitHealthMax('player')"
     local healthResult = GSE.EvaluateVariableDynamically(playerTestExpr, false)
     GSE.Print("Player max health: " .. tostring(healthResult), "GSE Dynamic Variables")
+
+    -- Test GSE.V variables (if any exist)
+    if next(GSE.V) then
+        for varName, varFunc in pairs(GSE.V) do
+            local gseVarExpr = "GSE.V." .. varName .. "()"
+            local gseVarResult = GSE.EvaluateVariableDynamically(gseVarExpr, false)
+            GSE.Print("GSE.V." .. varName .. "() = " .. tostring(gseVarResult), "GSE Dynamic Variables")
+
+            -- Test it twice to ensure it's dynamic
+            local gseVarResult2 = GSE.EvaluateVariableDynamically(gseVarExpr, false)
+            GSE.Print("GSE.V." .. varName .. "() (2nd call) = " .. tostring(gseVarResult2), "GSE Dynamic Variables")
+            break -- Just test the first one
+        end
+    else
+        GSE.Print("No GSE.V variables found. Create some in the GSE editor to test.", "GSE Dynamic Variables")
+    end
 
     -- Test error handling
     local errorExpr = "invalidFunctionCall()"
