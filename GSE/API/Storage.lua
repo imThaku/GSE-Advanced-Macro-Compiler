@@ -145,6 +145,36 @@ local function evaluateDynamicVariable(expression, fallbackValue)
         return fallbackValue
     end
 end
+
+local function evaluateDynamicCondition(expression)
+    if not expression or expression == "" then
+        return false
+    end
+
+    -- Remove leading = if present
+    if string.sub(expression, 1, 1) == "=" then
+        expression = string.sub(expression, 2)
+    end
+
+    local success, result = pcall(function()
+        -- Special handling for GSE.V variables
+        if string.find(expression, "GSE%.V%.") then
+            local varName = string.match(expression, "GSE%.V%.([%w_]+)%(")
+            if varName and GSE.V[varName] then
+                return GSE.V[varName]()
+            end
+        end
+
+        -- Regular expression evaluation
+        local func = loadstring("return " .. expression)
+        if func then
+            return func()
+        end
+        return false
+    end)
+
+    return success and result
+end
 ]=]
 end
 
@@ -1118,31 +1148,82 @@ function GSE.processAction(action, metaData, variables)
             GSE.Print(L["If Blocks Require a variable."], L["Macro Compile Error"])
             return
         end
-        local funct = action.Variable
-        if string.sub(funct, 1, 1) == "=" then
-            funct = string.sub(funct, 2, string.len(funct))
-        end
 
-        local val = loadstring("return " .. funct)()
+        -- Check if dynamic variables are enabled
+        if GSEOptions and GSEOptions.useDynamicVariables then
+            -- Dynamic IF: Create a special action that evaluates condition at runtime
+            local dynamicIfAction = {
+                type = "dynamicif",
+                condition = action.Variable,
+                trueActions = {},
+                falseActions = {}
+            }
 
-        local actions
-        if val then
-            actions = action[1]
-        else
-            if action[2] then
-                actions = action[2]
-            else
-                return
+            -- Process true branch
+            if action[1] then
+                for _, v in ipairs(action[1]) do
+                    local builtaction = GSE.processAction(v, metaData, variables)
+                    if builtaction then
+                        if type(builtaction) == "table" and builtaction[1] then
+                            -- It's a list of actions
+                            for _, subAction in ipairs(builtaction) do
+                                table.insert(dynamicIfAction.trueActions, subAction)
+                            end
+                        else
+                            -- It's a single action
+                            table.insert(dynamicIfAction.trueActions, builtaction)
+                        end
+                    end
+                end
             end
-        end
 
-        local actionList = {}
-        for _, v in ipairs(actions) do
-            local builtaction = GSE.processAction(v, metaData, variables)
-            table.insert(actionList, builtaction)
-        end
+            -- Process false branch
+            if action[2] then
+                for _, v in ipairs(action[2]) do
+                    local builtaction = GSE.processAction(v, metaData, variables)
+                    if builtaction then
+                        if type(builtaction) == "table" and builtaction[1] then
+                            -- It's a list of actions
+                            for _, subAction in ipairs(builtaction) do
+                                table.insert(dynamicIfAction.falseActions, subAction)
+                            end
+                        else
+                            -- It's a single action
+                            table.insert(dynamicIfAction.falseActions, builtaction)
+                        end
+                    end
+                end
+            end
 
-        return actionList
+            return dynamicIfAction
+        else
+            -- Static IF: Original behavior for compatibility
+            local funct = action.Variable
+            if string.sub(funct, 1, 1) == "=" then
+                funct = string.sub(funct, 2, string.len(funct))
+            end
+
+            local val = loadstring("return " .. funct)()
+
+            local actions
+            if val then
+                actions = action[1]
+            else
+                if action[2] then
+                    actions = action[2]
+                else
+                    return
+                end
+            end
+
+            local actionList = {}
+            for _, v in ipairs(actions) do
+                local builtaction = GSE.processAction(v, metaData, variables)
+                table.insert(actionList, builtaction)
+            end
+
+            return actionList
+        end
     elseif action.Type == Statics.Actions.Action then
         local builtstuff = buildAction(action, metaData)
         return builtstuff
@@ -1344,31 +1425,72 @@ end
     iteration = tonumber(iteration)
 
     -- Enhanced attribute setting with dynamic variable evaluation
-    for k,v in pairs(spelllist[iteration][step]) do
-        if k == "macrotext" then
-            self:SetAttribute("macro", nil )
-            self:SetAttribute("unit", nil )
-        elseif k == "macro" then
-            self:SetAttribute("macrotext", nil )
-            self:SetAttribute("unit", nil )
-        elseif k == "Icon" then
-            -- skip
-        elseif string.sub(k, 1, 10) == "__dynamic_" then
-            -- This is a dynamic variable expression marker, skip setting it as attribute
-        else
-            local finalValue = v
-            local dynamicKey = "__dynamic_" .. k
+    local currentAction = spelllist[iteration][step]
 
-            -- Check if there's a dynamic version of this attribute
-            if spelllist[iteration][step][dynamicKey] and evaluateDynamicVariable then
-                -- Evaluate the dynamic expression
-                local dynamicResult = evaluateDynamicVariable(spelllist[iteration][step][dynamicKey], v)
-                if dynamicResult and dynamicResult ~= "" then
-                    finalValue = dynamicResult
+    -- Check if this is a dynamic IF action
+    if currentAction.type == "dynamicif" then
+        -- Evaluate the condition dynamically
+        local conditionResult = false
+        if evaluateDynamicCondition then
+            conditionResult = evaluateDynamicCondition(currentAction.condition)
+        end
+
+        -- Choose the appropriate action based on condition
+        local actionToExecute = nil
+        if conditionResult and currentAction.trueActions and #currentAction.trueActions > 0 then
+            -- Use a deterministic index based on step to cycle through true actions
+            local actionIndex = ((step - 1) % #currentAction.trueActions) + 1
+            actionToExecute = currentAction.trueActions[actionIndex]
+        elseif not conditionResult and currentAction.falseActions and #currentAction.falseActions > 0 then
+            -- Use a deterministic index based on step to cycle through false actions
+            local actionIndex = ((step - 1) % #currentAction.falseActions) + 1
+            actionToExecute = currentAction.falseActions[actionIndex]
+        end
+
+        -- Set attributes from the chosen action
+        if actionToExecute then
+            for k, v in pairs(actionToExecute) do
+                if k == "macrotext" then
+                    self:SetAttribute("macro", nil)
+                    self:SetAttribute("unit", nil)
+                elseif k == "macro" then
+                    self:SetAttribute("macrotext", nil)
+                    self:SetAttribute("unit", nil)
+                elseif k == "Icon" then
+                    -- skip
+                elseif k ~= "type" then
+                    self:SetAttribute(k, v)
                 end
             end
+        end
+    else
+        -- Normal action processing
+        for k,v in pairs(currentAction) do
+            if k == "macrotext" then
+                self:SetAttribute("macro", nil )
+                self:SetAttribute("unit", nil )
+            elseif k == "macro" then
+                self:SetAttribute("macrotext", nil )
+                self:SetAttribute("unit", nil )
+            elseif k == "Icon" then
+                -- skip
+            elseif string.sub(k, 1, 10) == "__dynamic_" then
+                -- This is a dynamic variable expression marker, skip setting it as attribute
+            else
+                local finalValue = v
+                local dynamicKey = "__dynamic_" .. k
 
-            self:SetAttribute(k, finalValue)
+                -- Check if there's a dynamic version of this attribute
+                if currentAction[dynamicKey] and evaluateDynamicVariable then
+                    -- Evaluate the dynamic expression
+                    local dynamicResult = evaluateDynamicVariable(currentAction[dynamicKey], v)
+                    if dynamicResult and dynamicResult ~= "" then
+                        finalValue = dynamicResult
+                    end
+                end
+
+                self:SetAttribute(k, finalValue)
+            end
         end
     end
 
@@ -1407,31 +1529,72 @@ end
         self:SetAttribute('stepped', false)
     else
         -- Enhanced attribute setting with dynamic variable evaluation (Multiclick version)
-        for k,v in pairs(spelllist[iteration][step]) do
-            if k == "macrotext" then
-                self:SetAttribute("macro", nil )
-                self:SetAttribute("unit", nil )
-            elseif k == "macro" then
-                self:SetAttribute("macrotext", nil )
-                self:SetAttribute("unit", nil )
-            elseif k == "Icon" then
-                -- skip
-            elseif string.sub(k, 1, 10) == "__dynamic_" then
-                -- This is a dynamic variable expression marker, skip setting it as attribute
-            else
-                local finalValue = v
-                local dynamicKey = "__dynamic_" .. k
+        local currentAction = spelllist[iteration][step]
 
-                -- Check if there's a dynamic version of this attribute
-                if spelllist[iteration][step][dynamicKey] and evaluateDynamicVariable then
-                    -- Evaluate the dynamic expression
-                    local dynamicResult = evaluateDynamicVariable(spelllist[iteration][step][dynamicKey], v)
-                    if dynamicResult and dynamicResult ~= "" then
-                        finalValue = dynamicResult
+        -- Check if this is a dynamic IF action
+        if currentAction.type == "dynamicif" then
+            -- Evaluate the condition dynamically
+            local conditionResult = false
+            if evaluateDynamicCondition then
+                conditionResult = evaluateDynamicCondition(currentAction.condition)
+            end
+
+            -- Choose the appropriate action based on condition
+            local actionToExecute = nil
+            if conditionResult and currentAction.trueActions and #currentAction.trueActions > 0 then
+                -- Use a deterministic index based on step to cycle through true actions
+                local actionIndex = ((step - 1) % #currentAction.trueActions) + 1
+                actionToExecute = currentAction.trueActions[actionIndex]
+            elseif not conditionResult and currentAction.falseActions and #currentAction.falseActions > 0 then
+                -- Use a deterministic index based on step to cycle through false actions
+                local actionIndex = ((step - 1) % #currentAction.falseActions) + 1
+                actionToExecute = currentAction.falseActions[actionIndex]
+            end
+
+            -- Set attributes from the chosen action
+            if actionToExecute then
+                for k, v in pairs(actionToExecute) do
+                    if k == "macrotext" then
+                        self:SetAttribute("macro", nil)
+                        self:SetAttribute("unit", nil)
+                    elseif k == "macro" then
+                        self:SetAttribute("macrotext", nil)
+                        self:SetAttribute("unit", nil)
+                    elseif k == "Icon" then
+                        -- skip
+                    elseif k ~= "type" then
+                        self:SetAttribute(k, v)
                     end
                 end
+            end
+        else
+            -- Normal action processing
+            for k,v in pairs(currentAction) do
+                if k == "macrotext" then
+                    self:SetAttribute("macro", nil )
+                    self:SetAttribute("unit", nil )
+                elseif k == "macro" then
+                    self:SetAttribute("macrotext", nil )
+                    self:SetAttribute("unit", nil )
+                elseif k == "Icon" then
+                    -- skip
+                elseif string.sub(k, 1, 10) == "__dynamic_" then
+                    -- This is a dynamic variable expression marker, skip setting it as attribute
+                else
+                    local finalValue = v
+                    local dynamicKey = "__dynamic_" .. k
 
-                self:SetAttribute(k, finalValue)
+                    -- Check if there's a dynamic version of this attribute
+                    if currentAction[dynamicKey] and evaluateDynamicVariable then
+                        -- Evaluate the dynamic expression
+                        local dynamicResult = evaluateDynamicVariable(currentAction[dynamicKey], v)
+                        if dynamicResult and dynamicResult ~= "" then
+                            finalValue = dynamicResult
+                        end
+                    end
+
+                    self:SetAttribute(k, finalValue)
+                end
             end
         end
 

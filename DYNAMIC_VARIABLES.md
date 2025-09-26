@@ -82,6 +82,25 @@ GSE.ClearDynamicVariableCache()
 local result = GSE.EvaluateVariableDynamically("math.random()", false)
 ```
 
+## Blocs IF Dynamiques
+
+**Nouveauté** : Les blocs IF de GSE peuvent maintenant être évalués dynamiquement !
+
+### Comment ça marche
+Quand les variables dynamiques sont activées, les blocs IF réévaluent leur condition **à chaque clic** au lieu d'une seule fois à la compilation.
+
+### Exemple d'utilisation
+```
+Bloc IF avec condition: =GSE.V.Afflicted()
+├─ TRUE: Action avec spell="Obliterate"
+└─ FALSE: Action avec spell="Frost Strike"
+```
+
+À chaque clic, la condition `GSE.V.Afflicted()` sera réévaluée et la bonne branche sera exécutée.
+
+### Migration depuis les blocs IF statiques
+Aucune modification nécessaire ! Vos blocs IF existants fonctionneront automatiquement en mode dynamique une fois les variables dynamiques activées.
+
 ## Cas d'utilisation avancés
 
 ### 1. Healing intelligent
