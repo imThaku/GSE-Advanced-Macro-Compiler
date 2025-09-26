@@ -98,12 +98,11 @@ end
 -- Initialize runtime settings from saved data
 GSE.LiveVariableSettings = GSEOptions.LiveVariableSettings or {}
 
--- Function to force save Live Variable settings
+-- Function to force save Live Variable settings (deprecated - now using GSEVariables)
 function GSE.SaveLiveVariableSettings()
-    if GSEOptions then
-        GSEOptions.LiveVariableSettings = GSE.LiveVariableSettings
-        GSE.PrintDebugMessage("Forced save of Live Variable settings", GNOME)
-    end
+    -- This function is kept for compatibility but no longer needed
+    -- Live Variables are now saved directly to GSEVariables like standard variables
+    GSE.PrintDebugMessage("SaveLiveVariableSettings called (deprecated)", GNOME)
 end
 
 -- Function to check if load conditions are met for a variable
@@ -284,7 +283,24 @@ function GSE.CreateLiveVariableTimer(varName, code, updateInterval, debugMode, l
         GSE.LiveVariableDebug[varName] = false
     end
 
-    -- Store persistent settings (preserve existing comments and author if updating)
+    -- Store in GSEVariables exactly like standard variables, but with type "LiveLua"
+    local liveVariableData = {
+        type = "LiveLua",
+        funct = code,  -- Keep same format as standard variables
+        code = code,
+        updateInterval = updateInterval,
+        debugMode = GSE.LiveVariableDebug[varName] or false,
+        loadConditions = loadConditions or {},
+        created = GetTime(),
+        Author = GSE.GetCharacterName(),
+        comments = ""
+    }
+
+    -- Use the same compression and storage method as standard variables
+    local compressedVariable = GSE.EncodeMessage(liveVariableData)
+    GSEVariables[varName] = compressedVariable
+
+    -- Also keep in runtime settings for quick access (but this is not persistent)
     local existingSettings = GSE.LiveVariableSettings[varName]
     GSE.LiveVariableSettings[varName] = {
         code = code,
@@ -296,7 +312,6 @@ function GSE.CreateLiveVariableTimer(varName, code, updateInterval, debugMode, l
         Author = existingSettings and existingSettings.Author or GSE.GetCharacterName(),
         comments = existingSettings and existingSettings.comments or ""
     }
-    GSE.SaveLiveVariableSettings()
 
     -- Check variable count limit
     local currentCount = 0
@@ -341,15 +356,17 @@ function GSE.StopLiveVariableTimer(varName)
         -- Clean up from GSE.V like classic variables
         GSE.V[varName] = nil
 
+        -- Clean up from GSEVariables (same as standard variables)
+        GSEVariables[varName] = nil
+
         -- Clean up debug state and notify if it was in debug mode
         if GSE.LiveVariableDebug[varName] then
             print(string.format("[LiveVar Debug] Debug mode disabled for '%s' (variable deleted)", varName))
         end
         GSE.LiveVariableDebug[varName] = nil
 
-        -- Clean up persistent settings
+        -- Clean up runtime settings
         GSE.LiveVariableSettings[varName] = nil
-        GSE.SaveLiveVariableSettings()
 
         GSE.PrintDebugMessage("LiveLua timer stopped for '" .. varName .. "'", GNOME)
     end
@@ -379,7 +396,34 @@ end
 
 -- Function to get persistent settings for a LiveLua variable
 function GSE.GetLiveVariableSettings(varName)
-    return GSE.LiveVariableSettings[varName]
+    -- First try runtime cache
+    if GSE.LiveVariableSettings[varName] then
+        return GSE.LiveVariableSettings[varName]
+    end
+
+    -- Fallback to reading from GSEVariables
+    if GSEVariables and GSEVariables[varName] then
+        local status, result = pcall(function()
+            local _, uncompressed = GSE.DecodeMessage(GSEVariables[varName])
+            if uncompressed.type == "LiveLua" then
+                -- Convert to runtime format
+                return {
+                    code = uncompressed.funct or uncompressed.code,
+                    updateInterval = uncompressed.updateInterval,
+                    debugMode = uncompressed.debugMode,
+                    loadConditions = uncompressed.loadConditions,
+                    Author = uncompressed.Author,
+                    comments = uncompressed.comments
+                }
+            end
+        end)
+
+        if status and result then
+            return result
+        end
+    end
+
+    return nil
 end
 
 -- Function to toggle debug mode for a LiveLua variable
@@ -486,39 +530,55 @@ liveVariableEventFrame:SetScript("OnEvent", function(self, event)
     end
 end)
 
--- Function to restore LiveLua variables from saved settings
+-- Function to restore LiveLua variables from GSEVariables (same as standard variables)
 function GSE.RestoreLiveVariables()
-    -- Re-initialize from saved options to ensure we have the latest data
-    if GSEOptions and GSEOptions.LiveVariableSettings then
-        GSE.LiveVariableSettings = GSEOptions.LiveVariableSettings
-    else
-        GSE.PrintDebugMessage("No saved LiveVariable settings found", GNOME)
+    if GSE.isEmpty(GSEVariables) then
+        GSE.PrintDebugMessage("No GSEVariables found", GNOME)
         return
     end
 
     local restoredCount = 0
-    for varName, settings in pairs(GSE.LiveVariableSettings) do
-        if settings.code and settings.updateInterval then
-            local success = GSE.CreateLiveVariableTimer(
-                varName,
-                settings.code,
-                settings.updateInterval,
-                settings.debugMode,
-                settings.loadConditions
-            )
-            if success then
-                restoredCount = restoredCount + 1
-                GSE.PrintDebugMessage("Restored LiveLua variable '" .. varName .. "'", GNOME)
-            else
-                GSE.PrintDebugMessage("Failed to restore LiveLua variable '" .. varName .. "'", GNOME)
+    for varName, compressedData in pairs(GSEVariables) do
+        local status, err = pcall(function()
+            local _, uncompressedVersion = GSE.DecodeMessage(compressedData)
+
+            -- Check if this is a Live Variable
+            if uncompressedVersion.type == "LiveLua" then
+                -- Extract Live Variable data
+                local code = uncompressedVersion.funct or uncompressedVersion.code
+                local updateInterval = uncompressedVersion.updateInterval or 100
+                local debugMode = uncompressedVersion.debugMode or false
+                local loadConditions = uncompressedVersion.loadConditions or {}
+
+                if code and updateInterval then
+                    local success = GSE.CreateLiveVariableTimer(
+                        varName,
+                        code,
+                        updateInterval,
+                        debugMode,
+                        loadConditions
+                    )
+                    if success then
+                        restoredCount = restoredCount + 1
+                        GSE.PrintDebugMessage("Restored LiveLua variable '" .. varName .. "'", GNOME)
+                    else
+                        GSE.PrintDebugMessage("Failed to restore LiveLua variable '" .. varName .. "'", GNOME)
+                    end
+                else
+                    GSE.PrintDebugMessage("Incomplete LiveLua variable data for '" .. varName .. "'", GNOME)
+                end
             end
-        else
-            GSE.PrintDebugMessage("Skipping incomplete LiveVariable settings for '" .. varName .. "'", GNOME)
+        end)
+
+        if not status then
+            GSE.PrintDebugMessage("Error processing variable '" .. varName .. "': " .. tostring(err), GNOME)
         end
     end
 
     if restoredCount > 0 then
         GSE.Print("Restored " .. restoredCount .. " Live Variables", "LiveVariables")
+    else
+        GSE.PrintDebugMessage("No Live Variables found to restore", GNOME)
     end
 end
 
@@ -553,26 +613,39 @@ end)
 -- Debug function to check Live Variable settings
 function GSE.DebugLiveVariables()
     print("=== Live Variables Debug Info ===")
-    print("GSEOptions exists:", GSEOptions and "YES" or "NO")
-    print("GSEOptions.LiveVariableSettings exists:", GSEOptions and GSEOptions.LiveVariableSettings and "YES" or "NO")
+    print("GSEVariables exists:", GSEVariables and "YES" or "NO")
     print("GSE.LiveVariableSettings exists:", GSE.LiveVariableSettings and "YES" or "NO")
 
-    if GSE.LiveVariableSettings then
+    if GSEVariables then
         local count = 0
-        for k, v in pairs(GSE.LiveVariableSettings) do
+        local liveCount = 0
+        for k, v in pairs(GSEVariables) do
             count = count + 1
-            print("Saved variable:", k, "- Has code:", v.code and "YES" or "NO", "- Interval:", v.updateInterval)
+            -- Try to check if it's a Live Variable
+            local status, result = pcall(function()
+                local _, uncompressed = GSE.DecodeMessage(v)
+                if uncompressed.type == "LiveLua" then
+                    liveCount = liveCount + 1
+                    print("Live Variable in GSEVariables:", k, "- Interval:", uncompressed.updateInterval)
+                    return true
+                end
+                return false
+            end)
+            if not status then
+                print("Error checking variable:", k)
+            end
         end
-        print("Total saved variables:", count)
+        print("Total variables in GSEVariables:", count)
+        print("Live Variables in GSEVariables:", liveCount)
     end
 
     if GSE.LiveVariableTimers then
         local activeCount = 0
         for k, v in pairs(GSE.LiveVariableTimers) do
             activeCount = activeCount + 1
-            print("Active variable:", k)
+            print("Active timer:", k)
         end
-        print("Total active variables:", activeCount)
+        print("Total active timers:", activeCount)
     end
     print("=== End Debug Info ===")
 end
